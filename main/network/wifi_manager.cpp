@@ -5,10 +5,14 @@
 
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "esp_random.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
+#include "esp_wps.h"
 #include "freertos/task.h"
 #include "lwip/inet.h"  // htonl for the AP-IP fallback constant
+
+#include "../system/device_tracker.h"
 
 namespace shield {
 
@@ -19,6 +23,12 @@ const char* TAG = "wifi_manager";
 // applied where it is used so the in-memory bytes are network order
 // (matching esp_netif_ip_info_t::ip.addr).
 constexpr uint32_t kDefaultApIp = 0xC0A80401;
+
+// Alphabet for generated AP passwords: unambiguous chars only
+// (no 0/O, 1/l/I) so they can be read off the serial log reliably.
+constexpr const char* kPassAlphabet =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+constexpr int kApPassLen = 12;
 
 // ---------------------------------------------------------------------------
 // Captive-portal DNS hijack.
@@ -160,8 +170,13 @@ void WifiManager::event_handler(void* arg, esp_event_base_t event_base,
     if (self->events_) {
       xEventGroupClearBits(self->events_, kGotIpBit);
     }
-    ESP_LOGI(TAG, "STA disconnected; reconnecting...");
-    esp_wifi_connect();  // auto-reconnect
+    // Don't fight an in-progress WPS handshake with reconnect attempts.
+    if (self->wps_active_.load()) {
+      ESP_LOGI(TAG, "STA disconnected during WPS; leaving the session alone");
+    } else {
+      ESP_LOGI(TAG, "STA disconnected; reconnecting...");
+      esp_wifi_connect();  // auto-reconnect
+    }
   } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
     auto* evt = static_cast<ip_event_got_ip_t*>(event_data);
     self->connected_.store(true);
@@ -169,6 +184,31 @@ void WifiManager::event_handler(void* arg, esp_event_base_t event_base,
       xEventGroupSetBits(self->events_, kGotIpBit);
     }
     ESP_LOGI(TAG, "got IP: " IPSTR, IP2STR(&evt->ip_info.ip));
+    if (self->travel_active_.load()) {
+      self->enable_napt_once();  // AP clients need NAT once the uplink is up
+    }
+  } else if (event_base == IP_EVENT &&
+             event_id == IP_EVENT_AP_STAIPASSIGNED) {
+    // Travel mode: the DHCP server just leased an IP to an AP client.
+    // Record MAC+IP so the device tracker shows real clients, not just IPs.
+    auto* evt = static_cast<ip_event_ap_staipassigned_t*>(event_data);
+    char mac[18];
+    snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", evt->mac[0],
+             evt->mac[1], evt->mac[2], evt->mac[3], evt->mac[4], evt->mac[5]);
+    DeviceTracker::instance().note_client(evt->ip.addr, mac);
+    ESP_LOGI(TAG, "AP client joined: %s (" IPSTR ")", mac, IP2STR(&evt->ip));
+  } else if (event_base == WIFI_EVENT &&
+             event_id == WIFI_EVENT_STA_WPS_ER_SUCCESS) {
+    self->on_wps_success(
+        static_cast<wifi_event_sta_wps_er_success_t*>(event_data));
+  } else if (event_base == WIFI_EVENT &&
+             (event_id == WIFI_EVENT_STA_WPS_ER_FAILED ||
+              event_id == WIFI_EVENT_STA_WPS_ER_TIMEOUT ||
+              event_id == WIFI_EVENT_STA_WPS_ER_PBC_OVERLAP)) {
+    ESP_LOGW(TAG, "WPS failed/timeout (event %ld); use the captive portal instead",
+             (long)event_id);
+    esp_wifi_wps_disable();
+    self->wps_active_.store(false);
   }
 }
 
@@ -223,6 +263,53 @@ bool WifiManager::start_sta(const char* ssid, const char* pass) {
   }
   ESP_LOGW(TAG, "no IP within 15 s; background auto-reconnect continues");
   return false;
+}
+
+// Shared by start_provisioning_ap() (dns mode) and start_travel() (travel
+// mode without STA credentials): DNS hijack (every query → AP IP) + minimal
+// HTTP server (GET / setup form, POST /setup saves + reboots).
+// Requires ap_netif_ up and ap_ip_ already populated.
+bool WifiManager::start_portal_services(const char* ap_ssid_for_log) {
+  // Captive portal DNS: hijack EVERY query to the AP IP.
+  portal_dns_.set_query_handler(
+      [this](const uint8_t* req, size_t req_len, uint32_t client_ip,
+             uint8_t* resp, size_t* resp_len) -> bool {
+        (void)client_ip;
+        size_t n = build_hijack_response(req, req_len, ap_ip_, resp,
+                                         DnsServer::kMaxMessage);
+        if (n == 0) {
+          return false;
+        }
+        *resp_len = n;
+        return true;
+      });
+  if (!portal_dns_.start(53)) {
+    ESP_LOGE(TAG, "portal DNS server failed to start");
+    return false;
+  }
+
+  httpd_config_t hcfg = HTTPD_DEFAULT_CONFIG();
+  hcfg.uri_match_fn = httpd_uri_match_wildcard;
+  if (httpd_start(&portal_, &hcfg) != ESP_OK) {
+    ESP_LOGE(TAG, "httpd_start failed");
+    portal_dns_.stop();
+    return false;
+  }
+  const httpd_uri_t root = make_uri("/", HTTP_GET,
+                                    &WifiManager::portal_root_handler, this);
+  const httpd_uri_t setup = make_uri("/setup", HTTP_POST,
+                                     &WifiManager::portal_setup_handler, this);
+  httpd_register_uri_handler(portal_, &root);
+  httpd_register_uri_handler(portal_, &setup);
+
+  provisioning_ = true;
+  esp_ip4_addr_t a;
+  a.addr = ap_ip_;
+  char ip_str[16] = "?";
+  esp_ip4addr_ntoa(&a, ip_str, sizeof(ip_str));
+  ESP_LOGI(TAG, "provisioning portal on AP '%s': open http://%s",
+           ap_ssid_for_log, ip_str);
+  return true;
 }
 
 bool WifiManager::start_provisioning_ap(const char* device_name) {
@@ -280,41 +367,187 @@ bool WifiManager::start_provisioning_ap(const char* device_name) {
     ap_ip_ = ip_info.ip.addr;
   }
 
-  // Captive portal DNS: hijack EVERY query to the AP IP.
-  portal_dns_.set_query_handler(
-      [this](const uint8_t* req, size_t req_len, uint32_t client_ip,
-             uint8_t* resp, size_t* resp_len) -> bool {
-        (void)client_ip;
-        size_t n = build_hijack_response(req, req_len, ap_ip_, resp,
-                                         DnsServer::kMaxMessage);
-        if (n == 0) {
-          return false;
-        }
-        *resp_len = n;
-        return true;
-      });
-  if (!portal_dns_.start(53)) {
-    ESP_LOGE(TAG, "portal DNS server failed to start");
+  if (!start_portal_services(ap_ssid)) {
+    return false;
+  }
+  ESP_LOGI(TAG, "provisioning AP '%s' up (open network)", ap_ssid);
+  return true;
+}
+
+void WifiManager::ensure_ap_password(char* out, size_t len) {
+  auto& cm = ConfigManager::instance();
+  char cur[65] = {0};
+  if (cm.get_str("ap_pass", cur, sizeof(cur)) && cur[0] != '\0') {
+    strncpy(out, cur, len - 1);
+    out[len - 1] = '\0';
+    return;
+  }
+  // First boot: generate a 12-char password from unambiguous alphabet.
+  const size_t alpha_len = strlen(kPassAlphabet);
+  char gen[kApPassLen + 1];
+  for (int i = 0; i < kApPassLen; ++i) {
+    gen[i] = kPassAlphabet[esp_random() % alpha_len];
+  }
+  gen[kApPassLen] = '\0';
+  if (cm.set_str("ap_pass", gen)) {
+    ESP_LOGI(TAG, "generated travel AP password (first boot)");
+  } else {
+    ESP_LOGE(TAG, "failed to store generated ap_pass; using RAM-only value");
+  }
+  strncpy(out, gen, len - 1);
+  out[len - 1] = '\0';
+}
+
+void WifiManager::effective_ap_ssid(char* out, size_t len) {
+  auto& cm = ConfigManager::instance();
+  char cfg[33] = {0};
+  if (cm.get_str("ap_ssid", cfg, sizeof(cfg)) && cfg[0] != '\0') {
+    strncpy(out, cfg, len - 1);
+    out[len - 1] = '\0';
+    return;
+  }
+  // Default "Shield-XXXX": XXXX = last 2 bytes of the STA MAC as hex.
+  uint8_t mac[6] = {0};
+  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+    snprintf(out, len, "Shield-%02X%02X", mac[4], mac[5]);
+  } else {
+    ESP_LOGW(TAG, "esp_read_mac failed; using fallback AP SSID");
+    snprintf(out, len, "Shield-0000");
+  }
+}
+
+void WifiManager::enable_napt_once() {
+  bool expected = false;
+  if (!napt_enabled_.compare_exchange_strong(expected, true)) {
+    return;  // already enabled
+  }
+  if (sta_netif_ == nullptr) {
+    napt_enabled_.store(false);
+    return;
+  }
+  // NAT the AP subnet out through the STA uplink (requires
+  // CONFIG_LWIP_IPV4_NAPT=y). AP clients reach the internet via the STA IP.
+  const esp_err_t err = esp_netif_napt_enable(sta_netif_);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "esp_netif_napt_enable failed: %s (retry on next GOT_IP)",
+             esp_err_to_name(err));
+    napt_enabled_.store(false);  // allow a retry on the next GOT_IP
+  } else {
+    ESP_LOGI(TAG, "NAPT enabled: AP clients route through the STA uplink");
+  }
+}
+
+bool WifiManager::start_travel(const char* sta_ssid, const char* sta_pass) {
+  sta_netif_ = esp_netif_create_default_wifi_sta();
+  ap_netif_ = esp_netif_create_default_wifi_ap();
+  if (!sta_netif_ || !ap_netif_) {
+    ESP_LOGE(TAG, "failed to create STA/AP netifs");
     return false;
   }
 
-  httpd_config_t hcfg = HTTPD_DEFAULT_CONFIG();
-  hcfg.uri_match_fn = httpd_uri_match_wildcard;
-  if (httpd_start(&portal_, &hcfg) != ESP_OK) {
-    ESP_LOGE(TAG, "httpd_start failed");
-    portal_dns_.stop();
+  wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();
+  if (esp_wifi_init(&wcfg) != ESP_OK) {
+    ESP_LOGE(TAG, "esp_wifi_init failed");
     return false;
   }
-  const httpd_uri_t root = make_uri("/", HTTP_GET,
-                                    &WifiManager::portal_root_handler, this);
-  const httpd_uri_t setup = make_uri("/setup", HTTP_POST,
-                                     &WifiManager::portal_setup_handler, this);
-  httpd_register_uri_handler(portal_, &root);
-  httpd_register_uri_handler(portal_, &setup);
+  esp_wifi_set_storage(WIFI_STORAGE_RAM);
+  esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                      &WifiManager::event_handler, this,
+                                      &wifi_evt_);
+  // ANY_ID (not just STA_GOT_IP): we also need IP_EVENT_AP_STAIPASSIGNED
+  // for MAC tracking of AP clients.
+  esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
+                                      &WifiManager::event_handler, this,
+                                      &ip_evt_);
 
-  provisioning_ = true;
-  ESP_LOGI(TAG, "provisioning AP '%s' up; portal at http://" IPSTR, ap_ssid,
-           IP2STR(&ip_info.ip));
+  if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK) {
+    ESP_LOGE(TAG, "esp_wifi_set_mode(APSTA) failed");
+    return false;
+  }
+
+  const bool have_sta = sta_ssid != nullptr && sta_ssid[0] != '\0';
+  if (have_sta) {
+    wifi_config_t stacfg = {};
+    strncpy(reinterpret_cast<char*>(stacfg.sta.ssid), sta_ssid,
+            sizeof(stacfg.sta.ssid) - 1);
+    strncpy(reinterpret_cast<char*>(stacfg.sta.password), sta_pass ? sta_pass : "",
+            sizeof(stacfg.sta.password) - 1);
+    if (esp_wifi_set_config(WIFI_IF_STA, &stacfg) != ESP_OK) {
+      ESP_LOGE(TAG, "esp_wifi_set_config(STA) failed");
+      return false;
+    }
+  }
+
+  char ap_ssid[33] = {0};
+  char ap_pass[65] = {0};
+  effective_ap_ssid(ap_ssid, sizeof(ap_ssid));
+  ensure_ap_password(ap_pass, sizeof(ap_pass));
+  strncpy(ap_ssid_, ap_ssid, sizeof(ap_ssid_) - 1);
+
+  wifi_config_t apcfg = {};
+  strncpy(reinterpret_cast<char*>(apcfg.ap.ssid), ap_ssid,
+          sizeof(apcfg.ap.ssid) - 1);
+  apcfg.ap.ssid_len = strlen(ap_ssid);
+  strncpy(reinterpret_cast<char*>(apcfg.ap.password), ap_pass,
+          sizeof(apcfg.ap.password) - 1);
+  apcfg.ap.authmode = WIFI_AUTH_WPA2_PSK;
+  apcfg.ap.channel = 6;  // driver moves the AP onto the STA channel on connect
+  apcfg.ap.max_connection = 8;
+  if (esp_wifi_set_config(WIFI_IF_AP, &apcfg) != ESP_OK) {
+    ESP_LOGE(TAG, "esp_wifi_set_config(AP) failed");
+    return false;
+  }
+
+  if (esp_wifi_start() != ESP_OK) {
+    ESP_LOGE(TAG, "esp_wifi_start(APSTA) failed");
+    return false;
+  }
+  // esp_wifi_connect() for the STA side is issued from WIFI_EVENT_STA_START.
+
+  // AP IP (normally 192.168.4.1); read the real value from the netif.
+  ap_ip_ = htonl(kDefaultApIp);
+  esp_netif_ip_info_t ip_info = {};
+  if (esp_netif_get_ip_info(ap_netif_, &ip_info) == ESP_OK &&
+      ip_info.ip.addr != 0) {
+    ap_ip_ = ip_info.ip.addr;
+  }
+
+  // DHCP on the default AP netif auto-starts with the interface, and its
+  // DNS-server option defaults to the AP's own IP — exactly what travel mode
+  // needs, so joining clients use the Shield as their DNS server with zero
+  // manual setup. (Deliberately no esp_netif_dhcps_option() call: setting
+  // options fails once the server is running, and forcing the OFFER_DNS flag
+  // would switch the offered address to the unset dns_server field = 0.0.0.0.)
+
+  travel_active_.store(true);
+
+  if (!have_sta) {
+    // No upstream credentials yet: the travel AP doubles as the provisioning
+    // AP (same SSID/password). After the portal saves credentials and the
+    // device reboots, the AP persists — joined clients stay connected.
+    if (!start_portal_services(ap_ssid)) {
+      return false;
+    }
+  } else {
+    ESP_LOGI(TAG, "travel STA: joining '%s'...", sta_ssid);
+    const EventBits_t bits = xEventGroupWaitBits(
+        events_, kGotIpBit, pdFALSE, pdTRUE, pdMS_TO_TICKS(15000));
+    if (bits & kGotIpBit) {
+      enable_napt_once();  // also armed in the GOT_IP handler for reconnects
+    } else {
+      ESP_LOGW(TAG, "no STA IP within 15 s; background reconnect continues — "
+                    "AP clients get internet once the uplink is up");
+    }
+  }
+
+  char ip_str[16] = "?";
+  esp_ip4_addr_t a;
+  a.addr = ap_ip_;
+  esp_ip4addr_ntoa(&a, ip_str, sizeof(ip_str));
+  ESP_LOGI(TAG, "travel AP '%s' up (WPA2) at %s — password: %s", ap_ssid, ip_str,
+           ap_pass);
+  ESP_LOGI(TAG, "note: ESP32 NAT throughput is limited (~tens of Mbps); fine "
+                "for browsing/streaming, not a gigabit replacement");
   return true;
 }
 
@@ -326,9 +559,11 @@ bool WifiManager::init() {
   char ssid[33] = {0};
   char pass[65] = {0};
   char devname[64] = {0};
+  char mode[16] = {0};
   cfg.get_str("wifi_ssid", ssid, sizeof(ssid));
   cfg.get_str("wifi_pass", pass, sizeof(pass));
   cfg.get_str("device_name", devname, sizeof(devname));
+  cfg.get_str("mode", mode, sizeof(mode));  // missing/unknown ⇒ "dns"
   if (devname[0] == '\0') {
     strncpy(devname, "esp32-shield", sizeof(devname) - 1);
   }
@@ -342,6 +577,10 @@ bool WifiManager::init() {
     return false;
   }
 
+  if (strcmp(mode, "travel") == 0) {
+    ESP_LOGI(TAG, "mode=travel: starting AP+STA");
+    return start_travel(ssid, pass);
+  }
   if (ssid[0] != '\0') {
     return start_sta(ssid, pass);
   }
@@ -350,6 +589,10 @@ bool WifiManager::init() {
 }
 
 bool WifiManager::is_connected() const { return connected_.load(); }
+
+bool WifiManager::travel_active() const { return travel_active_.load(); }
+
+bool WifiManager::wps_active() const { return wps_active_.load(); }
 
 bool WifiManager::get_ip(char* out, size_t len) const {
   if (!out || len < 16) {
@@ -367,6 +610,38 @@ bool WifiManager::get_ip(char* out, size_t len) const {
   return true;
 }
 
+bool WifiManager::get_ap_ip(char* out, size_t len) const {
+  if (!out || len < 16 || ap_netif_ == nullptr) {
+    return false;
+  }
+  esp_netif_ip_info_t info = {};
+  if (esp_netif_get_ip_info(ap_netif_, &info) != ESP_OK) {
+    return false;
+  }
+  esp_ip4addr_ntoa(&info.ip, out, len);
+  return true;
+}
+
+bool WifiManager::get_ap_ssid(char* out, size_t len) const {
+  if (!out || len == 0 || ap_ssid_[0] == '\0') {
+    return false;
+  }
+  strncpy(out, ap_ssid_, len - 1);
+  out[len - 1] = '\0';
+  return true;
+}
+
+int WifiManager::ap_client_count() const {
+  if (ap_netif_ == nullptr) {
+    return -1;
+  }
+  wifi_sta_list_t list = {};
+  if (esp_wifi_ap_get_sta_list(&list) != ESP_OK) {
+    return -1;
+  }
+  return static_cast<int>(list.num);
+}
+
 int8_t WifiManager::rssi() const {
   if (!connected_.load()) {
     return 0;
@@ -376,6 +651,67 @@ int8_t WifiManager::rssi() const {
     return 0;
   }
   return ap.rssi;
+}
+
+bool WifiManager::start_wps() {
+  if (!travel_active_.load()) {
+    ESP_LOGW(TAG, "WPS is only available in travel mode");
+    return false;
+  }
+  if (connected_.load()) {
+    ESP_LOGW(TAG, "WPS refused: STA already connected");
+    return false;
+  }
+  bool expected = false;
+  if (!wps_active_.compare_exchange_strong(expected, true)) {
+    ESP_LOGW(TAG, "WPS session already in progress");
+    return false;
+  }
+  esp_wps_config_t wps_cfg = WPS_CONFIG_INIT_DEFAULT(WPS_TYPE_PBC);
+  if (esp_wifi_wps_enable(&wps_cfg) != ESP_OK) {
+    ESP_LOGE(TAG, "esp_wifi_wps_enable failed");
+    wps_active_.store(false);
+    return false;
+  }
+  if (esp_wifi_wps_start(0) != ESP_OK) {
+    ESP_LOGE(TAG, "esp_wifi_wps_start failed");
+    esp_wifi_wps_disable();
+    wps_active_.store(false);
+    return false;
+  }
+  ESP_LOGI(TAG, "WPS PBC started: press the WPS button on the upstream router "
+                "within ~2 minutes");
+  return true;
+}
+
+void WifiManager::on_wps_success(wifi_event_sta_wps_er_success_t* evt) {
+  wps_active_.store(false);
+  esp_wifi_wps_disable();
+  if (evt == nullptr || evt->ap_cred_cnt == 0) {
+    ESP_LOGE(TAG, "WPS succeeded but carried no credentials");
+    return;
+  }
+  // Credential arrays are fixed-size and may not be NUL-terminated.
+  char ssid[33] = {0};
+  char pass[65] = {0};
+  memcpy(ssid, evt->ap_cred[0].ssid, MAX_SSID_LEN);
+  memcpy(pass, evt->ap_cred[0].passphrase, MAX_PASSPHRASE_LEN);
+  ssid[sizeof(ssid) - 1] = '\0';
+  pass[sizeof(pass) - 1] = '\0';
+  if (ssid[0] == '\0') {
+    ESP_LOGE(TAG, "WPS returned an empty SSID");
+    return;
+  }
+  auto& cm = ConfigManager::instance();
+  if (!cm.set_str("wifi_ssid", ssid) || !cm.set_str("wifi_pass", pass)) {
+    ESP_LOGE(TAG, "failed to save WPS credentials to NVS");
+    return;
+  }
+  ESP_LOGI(TAG, "WPS success: credentials for '%s' saved; rebooting into "
+                "travel AP+STA",
+           ssid);
+  xTaskCreate(&WifiManager::restart_task, "wifi_restart", 2048, nullptr, 5,
+              nullptr);
 }
 
 esp_err_t WifiManager::portal_root_handler(httpd_req_t* req) {

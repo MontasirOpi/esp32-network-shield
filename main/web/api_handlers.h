@@ -31,6 +31,7 @@ esp_err_t api_post_rules(httpd_req_t* req);            // POST /api/rules
 esp_err_t api_delete_rule(httpd_req_t* req);           // DELETE /api/rules/* (wildcard)
 esp_err_t api_post_reboot(httpd_req_t* req);           // POST /api/reboot
 esp_err_t api_post_ota(httpd_req_t* req);              // POST /api/ota
+esp_err_t api_post_wps(httpd_req_t* req);              // POST /api/wps/start (travel mode)
 
 // Called by main.cpp after the DNS forwarder is created so that
 // PUT /api/config can push new upstreams live via DnsForwarder::set_upstreams

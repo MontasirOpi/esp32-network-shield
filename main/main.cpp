@@ -204,8 +204,10 @@ void health_monitor_task(void* arg) {
     ++cycle;
     const bool provisioning = in_provisioning_mode();
 
-    // Wi-Fi reconnect if STA link dropped.
-    if (!provisioning && !shield::WifiManager::instance().is_connected()) {
+    // Wi-Fi reconnect if STA link dropped (but never during a WPS session —
+    // esp_wifi_connect() would fight the WPS handshake).
+    if (!provisioning && !shield::WifiManager::instance().is_connected() &&
+        !shield::WifiManager::instance().wps_active()) {
       ESP_LOGW(TAG, "Wi-Fi link lost; attempting reconnect");
       // Team B may add WifiManager::reconnect(); esp_wifi_connect() reuses
       // the STA config already applied by wifi_manager.init().

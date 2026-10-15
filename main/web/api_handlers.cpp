@@ -39,7 +39,7 @@
 #include "../system/stats_engine.h"
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.4.0"
+#define FIRMWARE_VERSION "0.5.0"
 #endif
 
 namespace shield {
@@ -251,16 +251,34 @@ esp_err_t api_get_status(httpd_req_t* req) {
   const char slot = BlocklistFile::active_slot();
   char slot_str[2] = {(slot == 'B') ? 'B' : 'A', '\0'};
 
+  char mode[16] = {0};
+  cfg.get_str("mode", mode, sizeof(mode));
+  if (mode[0] == '\0') strncpy(mode, "dns", sizeof(mode) - 1);
+
   cJSON* root = cJSON_CreateObject();
   cJSON_AddStringToObject(root, "device", device);
   cJSON_AddStringToObject(root, "version", FIRMWARE_VERSION);
   cJSON_AddNumberToObject(root, "uptime_s", uptime_s());
+  cJSON_AddStringToObject(root, "mode", mode);
 
   cJSON* w = cJSON_CreateObject();
   cJSON_AddStringToObject(w, "ssid", ssid);
   cJSON_AddNumberToObject(w, "rssi", rssi);
   cJSON_AddStringToObject(w, "ip", ip);
   cJSON_AddItemToObject(root, "wifi", w);
+
+  // Travel mode extras: the client-facing AP (SSID/IP/associated count).
+  if (wifi.travel_active()) {
+    char ap_ssid[40] = {0}, ap_ip[20] = "0.0.0.0";
+    wifi.get_ap_ssid(ap_ssid, sizeof(ap_ssid));
+    wifi.get_ap_ip(ap_ip, sizeof(ap_ip));
+    cJSON* ap = cJSON_CreateObject();
+    cJSON_AddStringToObject(ap, "ssid", ap_ssid);
+    cJSON_AddStringToObject(ap, "ip", ap_ip);
+    cJSON_AddNumberToObject(ap, "clients", wifi.ap_client_count());
+    cJSON_AddItemToObject(root, "ap", ap);
+    cJSON_AddBoolToObject(root, "wps_active", wifi.wps_active());
+  }
 
   cJSON_AddBoolToObject(root, "filtering_enabled", filtering != 0);
 
@@ -326,6 +344,7 @@ esp_err_t api_get_devices(httpd_req_t* req) {
     ip_to_str(d.ip, ip, sizeof(ip));
     cJSON* e = cJSON_CreateObject();
     cJSON_AddStringToObject(e, "ip", ip);
+    cJSON_AddStringToObject(e, "mac", d.mac);
     cJSON_AddStringToObject(e, "hostname", d.hostname);
     cJSON_AddNumberToObject(e, "queries", d.queries);
     cJSON_AddNumberToObject(e, "blocked", d.blocked);
@@ -373,12 +392,14 @@ esp_err_t api_get_queries(httpd_req_t* req) {
 esp_err_t api_get_config(httpd_req_t* req) {
   if (!require_auth(req)) return ESP_OK;
   // All NVS keys from CONTRACTS.md §3 EXCEPT wifi_pass and api_token,
-  // which must never leave the device.
+  // which must never leave the device. ap_pass IS exposed: the dashboard
+  // needs to show the travel AP password (it's the user's own credential,
+  // visible only to authenticated API callers).
   auto& cfg = ConfigManager::instance();
   cJSON* root = cJSON_CreateObject();
 
   const char* str_keys[] = {"wifi_ssid", "device_name", "upstream_primary",
-                            "upstream_secondary"};
+                            "upstream_secondary", "mode", "ap_ssid", "ap_pass"};
   for (const char* k : str_keys) {
     char v[64] = {0};
     cfg.get_str(k, v, sizeof(v));
@@ -488,15 +509,64 @@ bool validate_config_item(const char* key, const cJSON* item, std::string& err) 
     err = std::string(key) + " cannot be changed via this API";
     return false;
   }
+  if (strcmp(key, "mode") == 0) {
+    const char* v = str_val();
+    if (v == nullptr || (strcmp(v, "dns") != 0 && strcmp(v, "travel") != 0)) {
+      err = "mode must be \"dns\" or \"travel\" (takes effect after reboot)";
+      return false;
+    }
+    return true;
+  }
+  if (strcmp(key, "ap_ssid") == 0) {
+    const char* v = str_val();
+    // Empty string = auto ("Shield-XXXX" from the MAC).
+    if (v == nullptr || strlen(v) > 32) {
+      err = "ap_ssid must be 0..32 chars (empty = auto)";
+      return false;
+    }
+    return true;
+  }
+  if (strcmp(key, "ap_pass") == 0) {
+    const char* v = str_val();
+    // Empty string = generate a fresh random password on next boot.
+    const size_t n = v == nullptr ? 0 : strlen(v);
+    if (n != 0 && (n < 8 || n > 63)) {
+      err = "ap_pass must be empty or 8..63 chars (WPA2 requirement)";
+      return false;
+    }
+    return true;
+  }
   // Unknown keys are ignored (forward compatibility), not an error.
   return true;
 }
 
 // Apply one already-validated key. Returns true if it affects the upstream
-// forwarder (primary/secondary/timeout).
-bool apply_config_item(const char* key, const cJSON* item) {
+// forwarder (primary/secondary/timeout). Sets reboot_needed when the change
+// only takes effect after a reboot (operating mode, travel AP settings).
+bool apply_config_item(const char* key, const cJSON* item, bool& reboot_needed) {
   auto& cfg = ConfigManager::instance();
   const long num = cJSON_IsNumber(item) ? (long)item->valuedouble : 0;
+
+  if (strcmp(key, "mode") == 0) {
+    char cur[16] = {0};
+    cfg.get_str("mode", cur, sizeof(cur));
+    if (cur[0] == '\0') strncpy(cur, "dns", sizeof(cur) - 1);  // unset ⇒ dns
+    if (strcmp(cur, item->valuestring) != 0) {
+      cfg.set_str(key, item->valuestring);
+      reboot_needed = true;
+    }
+    return false;
+  }
+  if (strcmp(key, "ap_ssid") == 0 || strcmp(key, "ap_pass") == 0) {
+    char cur[64] = {0};
+    cfg.get_str(key, cur, sizeof(cur));
+    if (strcmp(cur, item->valuestring) != 0) {
+      cfg.set_str(key, item->valuestring);
+      // AP credentials apply when the AP (re)starts.
+      reboot_needed = true;
+    }
+    return false;
+  }
 
   if (strcmp(key, "upstream_primary") == 0 || strcmp(key, "upstream_secondary") == 0 ||
       strcmp(key, "wifi_ssid") == 0 || strcmp(key, "device_name") == 0) {
@@ -553,9 +623,10 @@ esp_err_t api_put_config(httpd_req_t* req) {
 
   // Pass 2: apply via ConfigManager (setters commit to NVS immediately).
   bool upstream_changed = false;
+  bool reboot_needed = false;
   cJSON_ArrayForEach(item, json) {
     if (item->string == nullptr) continue;
-    if (apply_config_item(item->string, item)) upstream_changed = true;
+    if (apply_config_item(item->string, item, reboot_needed)) upstream_changed = true;
   }
   cJSON_Delete(json);
 
@@ -574,7 +645,7 @@ esp_err_t api_put_config(httpd_req_t* req) {
 
   cJSON* root = cJSON_CreateObject();
   cJSON_AddBoolToObject(root, "ok", true);
-  cJSON_AddBoolToObject(root, "reboot_required", false);
+  cJSON_AddBoolToObject(root, "reboot_required", reboot_needed);
   return send_json_obj(req, root);
 }
 
@@ -790,6 +861,34 @@ esp_err_t api_post_reboot(httpd_req_t* req) {
   }
   cJSON* root = cJSON_CreateObject();
   cJSON_AddBoolToObject(root, "ok", true);
+  return send_json_obj(req, root);
+}
+
+// ---- WPS push-button provisioning (travel mode) ----------------------------
+// Starts a WPS PBC session on the STA interface. The user must press the WPS
+// button on the upstream router within ~2 minutes. On success the received
+// credentials are saved to NVS and the device reboots into travel AP+STA.
+// Not all routers support WPS — the captive portal remains the fallback.
+esp_err_t api_post_wps(httpd_req_t* req) {
+  if (!require_auth(req)) return ESP_OK;
+  auto& wifi = WifiManager::instance();
+  if (!wifi.travel_active()) {
+    return send_error(req, "400 Bad Request",
+                      "WPS is only available in travel mode");
+  }
+  if (wifi.wps_active()) {
+    return send_error(req, "409 Conflict", "WPS session already in progress");
+  }
+  if (!wifi.start_wps()) {
+    return send_error(req, "500 Internal Server Error",
+                      "could not start WPS (STA may already be connected)");
+  }
+  cJSON* root = cJSON_CreateObject();
+  cJSON_AddStringToObject(root, "status", "started");
+  cJSON_AddStringToObject(
+      root, "message",
+      "WPS started: press the WPS button on your router within ~2 minutes. "
+      "The device reboots automatically on success.");
   return send_json_obj(req, root);
 }
 
