@@ -1,0 +1,33 @@
+# ESP32 Network Shield — default sdkconfig values (CONTRACTS.md §9).
+# `idf.py build` applies these on first configure; delete `sdkconfig` to reset.
+
+# --- Target chip ---
+CONFIG_IDF_TARGET="esp32"
+# To build for ESP32-S3 instead, replace the line above with:
+# CONFIG_IDF_TARGET="esp32s3"
+# (then `idf.py set-target esp32s3`, which regenerates sdkconfig)
+
+# --- Partition table: custom layout in partitions.csv (spans 4 MB) ---
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# The partition table occupies the full 4 MB; the flash-size default is 2 MB,
+# which makes the partition-table build step fail ("does not fit").
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# --- Language: C++ ---
+# NOTE: ESP-IDF v5.1 has NO Kconfig for the C++ standard (there is no
+# CONFIG_COMPILER_CXX_STANDARD_* symbol). tools/cmake/build.cmake hardcodes
+# -std=gnu++2b for chip targets, which is a superset of the C++17 this
+# project is written against — no setting needed here.
+
+# --- HTTP server: WebSocket support (dashboard live stats on /ws) ---
+# Default is n in IDF v5.1; the WS types/APIs don't exist without it.
+CONFIG_HTTPD_WS_SUPPORT=y
+
+# --- C++ exceptions: needed by the blocklist updater's OOM guard ---
+# (SpiramFirstAlloc throws std::bad_alloc when the heap is exhausted; the
+# updater catches it and aborts the update without touching the active slot.)
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+
+# --- Optimize for size: the app is ~1.17 MB at -O2; -Os buys partition room ---
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y

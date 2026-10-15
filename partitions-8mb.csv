@@ -1,0 +1,30 @@
+# ESP32 Network Shield — 8 MB flash partition table (recommended: ESP32-S3).
+#
+# The full-featured layout: two OTA slots, so firmware updates get A/B
+# rollback via the self-test in OtaManager, plus ~3.4 MB of LittleFS for
+# blocklist slots, stats, and logs.
+#
+# Use it with:
+#   idf.py set-target esp32s3
+#   # then point the partition table at this file (menuconfig or sdkconfig):
+#   CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions-8mb.csv"
+#   # and raise the flash size:
+#   CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+#
+# Name,     Type, SubType,  Offset,   Size
+nvs,        data, nvs,      0x9000,   0x6000
+phy_init,   data, phy,      0xf000,   0x1000
+factory,    app,  factory,  0x10000,  0x180000
+ota_0,      app,  ota_0,    0x190000, 0x180000
+ota_1,      app,  ota_1,    0x310000, 0x180000
+otadata,    data, ota,      0x490000, 0x2000
+littlefs,   data, littlefs, 0x492000, 0x36E000
+# Arithmetic check (must end exactly at 8 MB = 0x800000, no overlaps;
+# app partitions must be 64 KB-aligned, hence otadata sits after them):
+#   nvs:      0x9000   + 0x6000   = 0xF000
+#   phy_init: 0xF000   + 0x1000   = 0x10000
+#   factory:  0x10000  + 0x180000 = 0x190000
+#   ota_0:    0x190000 + 0x180000 = 0x310000
+#   ota_1:    0x310000 + 0x180000 = 0x490000
+#   otadata:  0x490000 + 0x2000   = 0x492000
+#   littlefs: 0x492000 + 0x36E000 = 0x800000  <-- exactly 8 MB (3.42 MB FS)

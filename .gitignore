@@ -1,0 +1,16 @@
+# ESP-IDF build output
+build/
+sdkconfig
+sdkconfig.old
+
+# IDF component manager
+dependencies.lock
+managed_components/
+
+# Editors / tooling
+.vscode/
+__pycache__/
+
+# Credentials / keys (never commit)
+*.pem
+*.key

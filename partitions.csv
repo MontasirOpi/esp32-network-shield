@@ -1,0 +1,25 @@
+# ESP32 Network Shield — 4 MB flash partition table (default: classic ESP32).
+#
+# Why this layout (measured, not guessed):
+#   - The app binary is ~1.17 MB, so every app slot is 1.25 MB (0x140000).
+#   - A/B blocklist slots need ~1.15 MB for the default sources
+#     (~73.7k unique domains x 8 B x 2 slots, measured 2026-10-15).
+#   - 3 app slots (factory + ota_0 + ota_1) + A/B blocklists do NOT fit in
+#     4 MB, so this table has ONE OTA slot: OTA updates work, but there is no
+#     rollback slot. For full A/B everything use partitions-8mb.csv (ESP32-S3).
+#
+# Name,     Type, SubType,  Offset,   Size
+nvs,        data, nvs,      0x9000,   0x6000
+phy_init,   data, phy,      0xf000,   0x1000
+factory,    app,  factory,  0x10000,  0x140000
+ota_0,      app,  ota_0,    0x150000, 0x140000
+otadata,    data, ota,      0x290000, 0x2000
+littlefs,   data, littlefs, 0x292000, 0x16E000
+# Arithmetic check (must end exactly at 4 MB = 0x400000, no overlaps;
+# app partitions must be 64 KB-aligned, hence otadata sits after them):
+#   nvs:      0x9000   + 0x6000   = 0xF000
+#   phy_init: 0xF000   + 0x1000   = 0x10000
+#   factory:  0x10000  + 0x140000 = 0x150000
+#   ota_0:    0x150000 + 0x140000 = 0x290000
+#   otadata:  0x290000 + 0x2000   = 0x292000
+#   littlefs: 0x292000 + 0x16E000 = 0x400000  <-- exactly 4 MB (1.44 MB FS)
