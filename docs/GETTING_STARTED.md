@@ -2,6 +2,8 @@
 
 From zero to network-wide ad blocking in about 30 minutes. You'll need: an ESP32 board, a USB cable, and a computer with a USB port.
 
+> Connecting the board for the first time? Start with [FLASHING.md](FLASHING.md) — USB drivers, finding the COM port, and uploading the firmware step by step — then come back here for provisioning and router setup.
+
 ## 1. Install ESP-IDF v5.1+
 
 The firmware builds with **ESP-IDF v5.1 or newer**, C++17, no Arduino layer.

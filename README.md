@@ -85,6 +85,7 @@ esp32-network-shield/
 ├── tests/host/               # host unit tests, no external deps (Team A)
 └── docs/
     ├── ARCHITECTURE.md       # deep dive: diagrams, RAM budget, file formats
+    ├── FLASHING.md           # connect the board via USB, drivers, upload firmware
     ├── GETTING_STARTED.md    # install → flash → provision → verify
     ├── API.md                # REST + WebSocket reference
     ├── TESTING.md            # host tests, build, on-device checks
@@ -95,6 +96,7 @@ esp32-network-shield/
 ## Docs
 
 - [Architecture](docs/ARCHITECTURE.md) — start here if you're going to hack on it.
+- [Flashing](docs/FLASHING.md) — connect the ESP32 over USB and upload the code, step by step.
 - [Getting started](docs/GETTING_STARTED.md) — flash it and get it on your network.
 - [API reference](docs/API.md) — REST + WebSocket.
 - [Testing](docs/TESTING.md) — host unit tests and on-device verification.
