@@ -31,3 +31,6 @@ CONFIG_COMPILER_CXX_EXCEPTIONS=y
 
 # --- Optimize for size: the app is ~1.17 MB at -O2; -Os buys partition room ---
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# --- IPv4 NAPT: required for travel mode (AP clients NAT through STA) ---
+CONFIG_LWIP_IPV4_NAPT=y

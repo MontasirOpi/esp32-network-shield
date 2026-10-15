@@ -228,6 +228,7 @@ bool HttpServer::register_routes() {
       make_route("/api/rules/*", HTTP_DELETE, api_delete_rule),
       make_route("/api/reboot", HTTP_POST, api_post_reboot),
       make_route("/api/ota", HTTP_POST, api_post_ota),
+      make_route("/api/wps/start", HTTP_POST, api_post_wps),
   };
   static_assert(sizeof(routes) / sizeof(routes[0]) <= 24, "too many URI handlers");
 

@@ -124,6 +124,7 @@
     <div class="row"><span class="k">Wi-Fi SSID</span><span class="v" id="stSsid">—</span></div>
     <div class="row"><span class="k">Wi-Fi RSSI</span><span class="v" id="stRssi">—</span></div>
     <div class="row"><span class="k">IP address</span><span class="v" id="stIp">—</span></div>
+    <div class="row"><span class="k">Mode</span><span class="v" id="stMode">—</span></div>
     <div class="row"><span class="k">Filtering</span><span class="v" id="stFiltering">—</span></div>
     <div class="row"><span class="k">Blocklist entries</span><span class="v" id="stBlEntries">—</span></div>
     <div class="row"><span class="k">Blocklist updated</span><span class="v" id="stBlUpdated">—</span></div>
@@ -131,6 +132,23 @@
   </section>
 
   <!-- Counters -->
+  <!-- Travel mode -->
+  <section class="card">
+    <h2>Travel mode</h2>
+    <div class="row"><span class="k">Mode</span><span class="v" id="tvMode">—</span></div>
+    <div class="row"><span class="k">AP SSID</span><span class="v" id="tvSsid">—</span></div>
+    <div class="row"><span class="k">AP IP</span><span class="v" id="tvIp">—</span></div>
+    <div class="row"><span class="k">AP clients</span><span class="v" id="tvClients">—</span></div>
+    <div class="inline-form">
+      <button class="primary" id="wpsBtn" style="flex:1">Start WPS</button>
+    </div>
+    <p class="muted" id="wpsMsg" style="margin:8px 0 0"></p>
+    <p class="muted">Travel mode shares the upstream Wi-Fi through the Shield's
+    own access point with ad blocking. Switch modes in Configuration below
+    (reboot required). Throughput is limited (~tens of Mbps) — fine for
+    browsing and streaming.</p>
+  </section>
+
   <section class="card">
     <h2>Counters</h2>
     <div class="counters">
@@ -193,6 +211,12 @@
       </select></div>
       <div class="field"><label>Filtering enabled</label><input id="cfgFiltering" type="checkbox" style="flex:none;width:18px;height:18px"></div>
       <div class="field"><label>Update interval (h)</label><input id="cfgInterval" type="number" min="1" max="168" required></div>
+      <div class="field"><label>Mode</label><select id="cfgMode">
+        <option value="dns">dns — router points its DNS at the Shield</option>
+        <option value="travel">travel — Shield hosts its own Wi-Fi (AP+STA)</option>
+      </select></div>
+      <div class="field"><label>Travel AP SSID</label><input id="cfgApSsid" maxlength="32" placeholder="empty = auto (Shield-XXXX)"></div>
+      <div class="field"><label>Travel AP password</label><input id="cfgApPass" maxlength="63" placeholder="clear + save for a new random password"></div>
       <button class="primary" type="submit" style="width:100%">Save configuration</button>
     </form>
     <p class="muted" id="cfgMsg" style="margin:8px 0 0"></p>
@@ -320,6 +344,23 @@ async function loadStatus() {
   $('stSsid').textContent = s.wifi.ssid || '—';
   $('stRssi').textContent = s.wifi.ssid ? s.wifi.rssi + ' dBm' : '—';
   $('stIp').textContent = s.wifi.ip || '—';
+  $('stMode').textContent = s.mode || 'dns';
+  // Travel card
+  $('tvMode').textContent = s.mode || 'dns';
+  if (s.ap) {
+    $('tvSsid').textContent = s.ap.ssid || '—';
+    $('tvIp').textContent = s.ap.ip || '—';
+    $('tvClients').textContent = s.ap.clients >= 0 ? s.ap.clients : '—';
+  } else {
+    $('tvSsid').textContent = '—';
+    $('tvIp').textContent = '—';
+    $('tvClients').textContent = '—';
+  }
+  const travel = (s.mode === 'travel');
+  $('wpsBtn').disabled = !travel || !!s.wps_active;
+  if (s.wps_active) {
+    $('wpsMsg').textContent = 'WPS session in progress — press the WPS button on your router now.';
+  }
   $('stFiltering').innerHTML = s.filtering_enabled
     ? '<span class="pill allow">on</span>' : '<span class="pill block">off</span>';
   $('stBlEntries').textContent = (s.blocklist.entries || 0).toLocaleString();
@@ -419,6 +460,9 @@ async function loadConfig() {
   $('cfgBlockMode').value = String(c.block_mode || 0);
   $('cfgFiltering').checked = !!c.filtering_enabled;
   $('cfgInterval').value = c.update_interval_h || 24;
+  $('cfgMode').value = c.mode || 'dns';
+  $('cfgApSsid').value = c.ap_ssid || '';
+  $('cfgApPass').value = c.ap_pass || '';
 }
 $('cfgForm').onsubmit = async ev => {
   ev.preventDefault();
@@ -428,13 +472,34 @@ $('cfgForm').onsubmit = async ev => {
     upstream_timeout_ms: parseInt($('cfgTimeout').value, 10),
     block_mode: parseInt($('cfgBlockMode').value, 10),
     filtering_enabled: $('cfgFiltering').checked,
-    update_interval_h: parseInt($('cfgInterval').value, 10)
+    update_interval_h: parseInt($('cfgInterval').value, 10),
+    mode: $('cfgMode').value,
+    ap_ssid: $('cfgApSsid').value.trim(),
+    ap_pass: $('cfgApPass').value
   };
   try {
     const r = await api('/api/config', { method: 'PUT', body: JSON.stringify(body) });
-    $('cfgMsg').textContent = r.ok ? 'Saved. Upstream changes apply immediately; no reboot needed.' : 'Unexpected response.';
+    $('cfgMsg').textContent = r.ok
+      ? (r.reboot_required
+          ? 'Saved. Mode/AP changes need a reboot — use System → Reboot device.'
+          : 'Saved. Upstream changes apply immediately; no reboot needed.')
+      : 'Unexpected response.';
     loadStatus().catch(() => {});
   } catch (e) { showErr('Config save failed: ' + e.message); }
+};
+
+// ---- WPS ----
+$('wpsBtn').onclick = async () => {
+  $('wpsBtn').disabled = true;
+  $('wpsMsg').textContent = 'Starting WPS…';
+  try {
+    const r = await api('/api/wps/start', { method: 'POST' });
+    $('wpsMsg').textContent = r.message || 'WPS started — press the WPS button on your router.';
+  } catch (e) {
+    showErr('WPS failed: ' + e.message);
+    $('wpsMsg').textContent = '';
+    $('wpsBtn').disabled = false;
+  }
 };
 
 // ---- blocklist ----
