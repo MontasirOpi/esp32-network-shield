@@ -68,6 +68,8 @@ If you mistype the password, the device can't connect and drops back into provis
 
 ## 5. Point your router's DNS at the Shield
 
+> **No router admin access?** (Hotel, café, someone else's network.) Skip this step and use **travel mode** instead — see [§7](#7-travel-mode-portable-ap).
+
 1. **Find the Shield's IP.** Any of: the serial log line after Wi-Fi connects, your router's DHCP client list, or http://esp32-shield.local (mDNS — works on macOS/Windows 10+ out of the box; Linux needs Avahi).
 2. **Router settings → LAN / DHCP settings → DNS server.** Set the primary DNS to the Shield's IP (e.g. `192.168.1.50`). Generic wording because every router's UI differs — look for "DHCP", "LAN settings", or "DNS".
    - *Trade-off:* if you list only the Shield and it's powered off, your network loses DNS. Listing a public DNS (e.g. `1.1.1.1`) as secondary keeps you online but lets some queries bypass filtering. Most people pick Shield-only once they trust it.
@@ -98,3 +100,34 @@ nslookup doubleclick.net 192.168.1.50
 Then open the dashboard at **http://192.168.1.50** (or http://esp32-shield.local), paste your API token when prompted (it's stored in the browser's `localStorage`), and watch live queries roll in.
 
 Having trouble? Check the [testing checklist](TESTING.md#on-device-verification) and the serial log — the boot milestones are listed there.
+
+## 7. Travel mode (portable AP)
+
+When you **can't touch the router** — a hotel, café, Airbnb, or a friend's house — travel mode turns the Shield into its own ad-blocking Wi-Fi network. You only need power and the upstream Wi-Fi credentials.
+
+**When to use it:** any network where you can't change DHCP/DNS settings. **When not to:** at home, where dns mode (this guide's default) gives the Shield your router's full speed instead of the ESP32's software NAT (~tens of Mbps — fine for browsing/streaming).
+
+**Switching modes** (either direction) — dashboard → Configuration → **Mode** → Save, then System → **Reboot device**. Or via API:
+
+```bash
+# dns → travel
+curl -X PUT http://$IP/api/config -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"travel"}'
+# → {"ok":true,"reboot_required":true}
+curl -X POST http://$IP/api/reboot -H "Authorization: Bearer $TOKEN"
+```
+
+**Using travel mode:**
+
+1. Switch to travel mode and reboot (above).
+2. **First boot in travel mode:** the Shield creates the AP **`Shield-XXXX`** (WPA2). The password was auto-generated — read it from the serial log (`travel AP 'Shield-XXXX' up (WPA2) ... password: ...`), or set your own via `PUT /api/config {"ap_pass":"..."}` before switching. The AP SSID is also customizable (`ap_ssid`; empty = auto).
+3. Join `Shield-XXXX` from your phone/laptop. The captive portal appears (no upstream credentials yet) — enter the hotel/café/home **upstream Wi-Fi** SSID and password. The Shield reboots; the `Shield-XXXX` AP comes back with the **same SSID and password**, so your devices stay joined — now with internet, NAT'd through the upstream link.
+4. That's it: every device on `Shield-XXXX` gets DNS from the Shield (advertised automatically by DHCP), so ads/trackers are blocked network-wide. Dashboard at **http://192.168.4.1** (or `http://esp32-shield.local`).
+
+**WPS shortcut:** instead of typing the upstream password into the portal, you can use Wi-Fi Protected Setup — dashboard → Travel mode → **Start WPS**, then press the WPS button on the upstream router within ~2 minutes. The Shield saves the credentials and reboots itself. API: `POST /api/wps/start`. Note: many hotel/captive-portal networks don't support WPS (or need a browser login the Shield can't do) — the portal remains the fallback, and WPS only works while the Shield isn't already connected upstream.
+
+**Notes:**
+- AP clients are NAT'd through the STA uplink — expect tens of Mbps, not gigabit.
+- The dashboard shows the AP's client count, and `GET /api/devices` includes each client's MAC (from DHCP leases) in travel mode.
+- Switching back to `dns` mode reboots into the classic STA-only behavior; your router-DNS setup from §5 applies again.

@@ -4,7 +4,7 @@ Version history mapped to the original proposal's milestones, plus what's planne
 
 ## Shipped
 
-The firmware declares `FIRMWARE_VERSION "0.4.0"` — V0.4 feature level.
+The firmware declares `FIRMWARE_VERSION "0.5.0"` — V0.5 feature level.
 
 | Milestone | Status | Notes |
 |---|---|---|
@@ -16,6 +16,7 @@ The firmware declares `FIRMWARE_VERSION "0.4.0"` — V0.4 feature level.
 | **V0.6 — device monitoring** | ✅ basic | Per-IP query/block counters (32-slot table), device list API, query ring buffer. *Basic* = IP-based only; **no hostname resolution yet** — `hostname` is empty in V1. |
 | **V0.7 — OTA** | ✅ basic | HTTPS OTA via `POST /api/ota`, post-reboot DNS self-test. Rollback needs *two* OTA partitions — present in `partitions-8mb.csv` (S3), but the default 4 MB `partitions.csv` has a single OTA slot, so 4 MB builds update without rollback. *Basic* = manual URL trigger; no update server / version-check channel. |
 | **V0.8 — Flutter app** | 🔜 Phase 2 | Deliberately deferred. The REST + WebSocket API is the app's backend contract and is stable — a mobile app can be built against [API.md](API.md) without firmware changes. |
+| **V0.9 — travel mode** | ✅ | Portable AP+STA operation: `mode` key (`dns`/`travel`), WPA2 AP `Shield-XXXX` with auto-generated password, DHCP advertising the Shield as DNS, NAPT to the STA uplink, captive-portal provisioning on the travel AP, WPS push-button provisioning (`POST /api/wps/start`), MAC tracking from DHCP leases. NAT throughput is tens of Mbps — fine for browsing/streaming, not a gigabit replacement. |
 
 ## Future
 

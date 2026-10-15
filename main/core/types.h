@@ -38,6 +38,7 @@ struct StatsSnapshot {
 
 struct DeviceEntry {
   uint32_t ip;                 // network byte order
+  char     mac[18];            // "AA:BB:CC:DD:EE:FF", empty if unknown
   char     hostname[64];       // may be empty
   uint32_t queries   = 0;
   uint32_t blocked   = 0;

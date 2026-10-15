@@ -43,14 +43,21 @@ curl http://$IP/api/status
 ```jsonc
 {
   "device": "esp32-shield",          // device_name
-  "version": "0.4.0",                // FIRMWARE_VERSION
+  "version": "0.5.0",                // FIRMWARE_VERSION
   "uptime_s": 86412,
+  "mode": "travel",                  // "dns" | "travel"
   "wifi": {                          // (pinned here)
     "connected": true,
     "ssid": "HomeNet",
     "ip": "192.168.1.50",
     "rssi": -61
   },
+  "ap": {                            // travel mode only
+    "ssid": "Shield-1A2B",
+    "ip": "192.168.4.1",
+    "clients": 3                     // associated stations, -1 if AP not up
+  },
+  "wps_active": false,               // travel mode only
   "filtering": {                     // (pinned here)
     "enabled": true,                 // filtering_enabled
     "block_mode": 0                  // 0=NULL_IP, 1=NXDOMAIN, 2=NODATA
@@ -106,6 +113,7 @@ curl -H "Authorization: Bearer $TOKEN" http://$IP/api/devices
 [
   {
     "ip": "192.168.1.10",
+    "mac": "AA:BB:CC:DD:EE:FF",
     "hostname": "",
     "queries": 12043,
     "blocked": 3211,
@@ -115,7 +123,7 @@ curl -H "Authorization: Bearer $TOKEN" http://$IP/api/devices
 ]
 ```
 
-Timestamps are seconds since boot.
+Timestamps are seconds since boot. `mac` is populated from DHCP lease events in travel mode; in dns mode it is usually empty (IP-only tracking).
 
 ### `GET /api/queries?limit=50` — protected
 
@@ -142,7 +150,7 @@ curl -H "Authorization: Bearer $TOKEN" "http://$IP/api/queries?limit=10"
 
 ### `GET /api/config` — protected
 
-Returns the NVS `shield` keys as JSON. **`wifi_pass` and `api_token` are never returned** *(pinned here — they're write-only/secrets)*.
+Returns the NVS `shield` keys as JSON. **`wifi_pass` and `api_token` are never returned** *(pinned here — they're write-only/secrets)*. **`ap_pass` IS returned**: the dashboard needs to display the travel AP password, and it's only visible to authenticated callers.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" http://$IP/api/config
@@ -159,23 +167,63 @@ curl -H "Authorization: Bearer $TOKEN" http://$IP/api/config
   "block_mode": 0,
   "update_interval_h": 24,
   "cache_entries": 256,
-  "stats_flush_min": 5
+  "stats_flush_min": 5,
+  "mode": "dns",
+  "ap_ssid": "",
+  "ap_pass": "xK9mQ2vB7nR4"
 }
 ```
+
+`ap_ssid` empty = auto (`Shield-XXXX` from the MAC). `ap_pass` is auto-generated on first travel boot if empty.
 
 ### `PUT /api/config` — protected
 
 Partial update: send only the keys you want to change. Values are validated (ranges, dotted-quad format for upstreams); invalid → `400 {"error":"<reason>"}`. `api_token` cannot be set this way. Setters commit to NVS immediately; upstream/filtering/block-mode changes apply live, Wi-Fi credential changes apply on next reboot.
 
+Travel-mode keys:
+
+| Key | Validation | Effect |
+|---|---|---|
+| `mode` | `"dns"` or `"travel"` | Takes effect after **reboot** (`"reboot_required": true`) |
+| `ap_ssid` | 0–32 chars (empty = auto) | Takes effect after **reboot** |
+| `ap_pass` | empty or 8–63 chars (WPA2) | Empty = generate a fresh random password on next boot; otherwise takes effect after **reboot** |
+
 ```bash
 curl -X PUT http://$IP/api/config \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"upstream_primary":"9.9.9.9","block_mode":1,"filtering_enabled":1}'
+  -d '{"mode":"travel"}'
+```
+
+```json
+{ "ok": true, "reboot_required": true }
 ```
 
 ```json
 { "updated": ["upstream_primary", "block_mode", "filtering_enabled"] }   // (pinned here)
+```
+
+## WPS provisioning
+
+### `POST /api/wps/start` — protected, travel mode only
+
+Starts a WPS push-button (PBC) enrollee session on the STA interface as an alternative to typing the upstream Wi-Fi password into the captive portal. Press the WPS button on the upstream router within ~2 minutes. On success the received credentials are saved to NVS and the device reboots into travel AP+STA automatically.
+
+- `400` — not in travel mode (`{"error":"WPS is only available in travel mode"}`).
+- `409` — a WPS session is already running.
+- `500` — could not start (e.g. STA already connected).
+
+Not all routers support WPS, and captive-portal/hotel networks can't be joined this way — the captive portal remains the fallback. Check `GET /api/status` → `wps_active` for session state.
+
+```bash
+curl -X POST http://$IP/api/wps/start -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "status": "started",
+  "message": "WPS started: press the WPS button on your router within ~2 minutes. The device reboots automatically on success."
+}
 ```
 
 ## Blocklist

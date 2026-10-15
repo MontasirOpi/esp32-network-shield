@@ -53,8 +53,10 @@ idf_component_register(
     mdns
     littlefs      # managed component (see idf_component.yml)
     json          # cJSON, used by stats_engine / config JSON files
+    wpa_supplicant # esp_wps.h (WPS push-button provisioning, travel mode)
   EMBED_FILES "web_dashboard/index.html"
 )
 
-# Firmware feature level (§9): 0.4 = DNS + blocking + cache + dashboard + updater.
-target_compile_definitions(${COMPONENT_LIB} PRIVATE FIRMWARE_VERSION="0.4.0")
+# Firmware feature level (§9): 0.5 = 0.4 + travel mode (AP+STA NAT),
+# WPS provisioning, AP client MAC tracking.
+target_compile_definitions(${COMPONENT_LIB} PRIVATE FIRMWARE_VERSION="0.5.0")

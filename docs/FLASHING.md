@@ -105,3 +105,7 @@ The board is now running but not on your Wi-Fi yet. Continue with [GETTING_START
 | Flash succeeds but dashboard never loads | Board didn't join your Wi-Fi (wrong password at provisioning) | It falls back to provisioning AP mode — join `ESP32-Shield-XXXX` again and re-enter credentials |
 
 Still stuck? Open an issue on the repo with your board model, the exact command you ran, and the last ~30 lines of output — that's everything needed to diagnose it.
+
+## Next: travel mode (optional)
+
+Flashing and first boot always start in **dns mode** (the classic router-DNS setup above). If you'll use the Shield somewhere you can't administer the router — hotel, café, Airbnb — switch to **travel mode** after provisioning: dashboard → Configuration → Mode → `travel` → Save, then System → Reboot. The Shield then hosts its own WPA2 Wi-Fi (`Shield-XXXX`) with ad blocking for anyone who joins. Full walkthrough: [GETTING_STARTED.md](GETTING_STARTED.md#7-travel-mode-portable-ap).

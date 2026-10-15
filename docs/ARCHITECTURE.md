@@ -219,6 +219,9 @@ Copied from CONTRACTS.md §3 — the contract is authoritative if this table eve
 | `api_token` | string | _(generated)_ | 32 lowercase hex chars, created on first boot |
 | `cache_entries` | u16 | `256` | DNS cache capacity |
 | `stats_flush_min` | u8 | `5` | stats persist cadence |
+| `mode` | string | `"dns"` | `"dns"` = router-DNS mode; `"travel"` = AP+STA portable mode (reboot to apply) |
+| `ap_ssid` | string | `""` | travel AP SSID; empty ⇒ `Shield-XXXX` from MAC (reboot to apply) |
+| `ap_pass` | string | _(generated)_ | travel AP WPA2 password; generated on first travel boot if empty; empty via API ⇒ regenerate on next boot |
 
 Rules: setters commit immediately (`nvs_commit`); never store the blocklist in NVS. The API token is generated once and never changes unless NVS is erased — see [API.md](API.md#authentication).
 
@@ -262,3 +265,39 @@ The user's original architecture proposal got us started; the list below is what
 7. **Captive-portal provisioning.** First boot = open AP `ESP32-Shield-XXXX` with DNS hijacked to the AP IP and a setup page at `GET /`; `POST /setup` writes credentials and reboots. No serial provisioning, no hardcoded secrets.
 8. **UDP-only DNS in V1 (documented limitation).** TCP fallback for truncated/large responses is explicitly deferred — see [ROADMAP](ROADMAP.md).
 9. **Configurable block modes.** `NULL_IP` (answer `0.0.0.0`/`::`, the default), `NXDOMAIN` (RCODE 3), and `NODATA` (NOERROR, zero answers) are all selectable via the `block_mode` key — the proposal had only the null-IP sinkhole.
+10. **Travel mode (AP+STA).** The proposal's "Mode 3 — Access Point" was a sketch; it is now a full implementation — see §12.
+
+## 12. Travel mode (portable plug-and-play AP)
+
+For networks where you have **no router admin access** (hotels, cafés, a friend's house): the Shield becomes its own Wi-Fi network with ad blocking, needing only power and an upstream Wi-Fi to join. Select it with the `mode` key (`"dns"` = default router-DNS behavior, `"travel"` = this mode; changing it reboots).
+
+```
+                        Internet
+                           │
+                    ┌──────┴──────┐
+                    │  Upstream   │  (hotel / café / home Wi-Fi)
+                    │  Wi-Fi AP   │
+                    └──────┬──────┘
+                           │ STA (DHCP client)
+                ┌──────────┴──────────┐
+                │    ESP32 Shield     │
+                │    (travel mode)    │
+                │                     │
+                │  AP "Shield-XXXX"   │◄──── Phone / Laptop join here
+                │  192.168.4.1/24     │      (WPA2, DHCP + DNS = Shield IP)
+                │  UDP :53, HTTP :80  │
+                │  NAPT ──────────────┼──► internet via STA
+                └─────────────────────┘
+```
+
+How it works:
+
+- **Concurrent AP+STA** (`WIFI_MODE_APSTA`). STA joins the upstream network with the provisioned credentials (same NVS keys, same captive-portal flow — in travel mode the portal runs on the travel AP itself, so the SSID/password you joined with persist after the reboot and your clients stay connected).
+- **The AP** is `Shield-XXXX` (`XXXX` = last two MAC bytes; overridable via `ap_ssid`), WPA2 with the `ap_pass` password. The password is auto-generated (12 unambiguous chars) on first travel boot, printed on the serial log, and shown/changed in the dashboard — never an unchangeable hardcoded default.
+- **DHCP on the AP** (default pool `192.168.4.2`–`192.168.4.101`, 100 leases) advertises the AP IP (`192.168.4.1`) as the DNS server, so joining clients get filtered DNS with zero manual configuration. The DNS server binds all interfaces, so AP-side queries flow through the normal pipeline (cache → rule engine → forwarder).
+- **NAPT** (`esp_netif_napt_enable()` on the STA netif, `CONFIG_LWIP_IPV4_NAPT=y`) routes AP clients to the internet through the STA uplink. It is enabled once the STA gets its IP and re-armed on reconnects.
+- **Dashboard, REST, WebSocket, and mDNS** all bind all interfaces, so `http://192.168.4.1` and `http://esp32-shield.local` work from AP clients too.
+- **Device tracking improves in travel mode:** the DHCP server's lease events (`IP_EVENT_AP_STAIPASSIGNED`) give us each client's MAC + assigned IP, recorded in the device table (visible as `mac` in `GET /api/devices`) — better than the IP-only tracking in dns mode. (DHCP hostnames are not captured; the `hostname` field stays empty for now.)
+- **WPS push-button provisioning:** `POST /api/wps/start` (dashboard button too) starts a WPS-PBC enrollee session on the STA interface — press the router's WPS button within ~2 minutes and the credentials are saved + the device reboots. Only in travel mode, only while the STA is idle. Not all routers support WPS; the captive portal remains the fallback.
+
+**Throughput honesty:** the ESP32's software NAT tops out at **tens of Mbps** in practice. That's plenty for browsing, video streaming, and hotel/café use — it is not a gigabit-router replacement. If you need full speed, use dns mode on your home router instead.

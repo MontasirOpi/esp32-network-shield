@@ -54,6 +54,7 @@ struct StatsSnapshot {
 
 struct DeviceEntry {
   uint32_t ip;                 // network byte order
+  char     mac[18];            // "AA:BB:CC:DD:EE:FF", empty if unknown
   char     hostname[64];       // may be empty
   uint32_t queries   = 0;
   uint32_t blocked   = 0;
@@ -89,6 +90,9 @@ struct QueryLogEntry {
 | `api_token`           | string | _(generated)_  | 32 lowercase hex chars, first boot |
 | `cache_entries`       | u16    | `256`          | DNS cache capacity                 |
 | `stats_flush_min`     | u8     | `5`            | stats persist cadence              |
+| `mode`                | string | `"dns"`        | `"dns"` = router-DNS mode; `"travel"` = AP+STA portable mode (reboot to apply) |
+| `ap_ssid`             | string | `""`           | travel AP SSID; empty ⇒ `Shield-XXXX` from MAC (reboot to apply) |
+| `ap_pass`             | string | _(generated)_  | travel AP WPA2 password; generated on first travel boot if empty; empty via API ⇒ regenerate on next boot |
 
 `ConfigManager` API (singleton):
 
@@ -221,10 +225,20 @@ class WifiManager {
  public:
   static WifiManager& instance();
   // STA if creds in NVS, else provisioning AP "ESP32-Shield-XXXX" (+captive portal).
-  bool init();          // reads ConfigManager, starts STA or AP-provisioning
+  // mode="travel": concurrent AP+STA — STA upstream, AP "Shield-XXXX" (WPA2)
+  // with DHCP (DNS = AP IP) + NAPT; provisioning portal on the travel AP when
+  // no STA credentials exist yet.
+  bool init();          // reads ConfigManager, starts STA / AP-provisioning / travel
   bool is_connected() const;
   bool get_ip(char* out, size_t len) const;   // dotted quad of STA/AP interface
   int8_t rssi() const;
+  // Travel mode:
+  bool travel_active() const;                 // AP+STA pair is up
+  bool get_ap_ip(char* out, size_t len) const;
+  bool get_ap_ssid(char* out, size_t len) const;
+  int  ap_client_count() const;               // -1 if AP not up
+  bool wps_active() const;
+  bool start_wps();  // WPS-PBC enrollee (travel mode, STA idle); saves creds + reboots
 };
 
 // mdns_advertise.h
@@ -398,6 +412,18 @@ stats flush, heap watermark log.
   - `DELETE /api/allowlist?domain=x` (extra; document it)
   - `GET /api/rules`, `POST /api/rules` `{domain, action:"block"|"allow"}`, `DELETE /api/rules/:id`
   - `POST /api/reboot`, `POST /api/ota` `{"url":"https://..."}`
+  - `POST /api/wps/start` → WPS push-button provisioning (travel mode only);
+    `{"status":"started","message":"..."}`; 400 when not in travel mode,
+    409 when a session is already running. Device reboots on success.
+- `GET /api/status` additionally returns `"mode"` (`"dns"`|`"travel"`),
+  and in travel mode an `"ap"` object `{ssid, ip, clients}` plus
+  `"wps_active"`.
+- `GET /api/devices` entries additionally carry `"mac"`.
+- `GET /api/config` additionally returns `mode`, `ap_ssid`, `ap_pass`
+  (ap_pass is exposed — authenticated callers need it to join the AP).
+- `PUT /api/config` accepts `mode` (`"dns"`|`"travel"`), `ap_ssid`
+  (0..32 chars, empty = auto), `ap_pass` (empty = regenerate on next boot,
+  else 8..63 chars); these set `"reboot_required": true` in the response.
 - Dashboard: single-file `main/web_dashboard/index.html`, embedded via
   `EMBED_FILES` in `main/CMakeLists.txt`, served at `/`. Must include: status
   card, counters (devices/queries/blocked/allowed/block rate), top blocked

@@ -13,7 +13,8 @@ Instead of installing ad blockers on every phone, laptop, and smart TV, the Shie
 - **REST + WebSocket API** — everything the dashboard does is scriptable (`/api/*`, `/ws`).
 - **OTA with rollback** — firmware updates over HTTPS; the device self-tests after reboot and rolls back if DNS breaks.
 - **Captive-portal provisioning** — first boot creates a setup Wi-Fi network; join it, enter your Wi-Fi credentials in the browser, done. No hardcoded secrets, no serial cable required after flashing.
-- **Device tracking** — per-IP query/block counters so you can see which device is the chattiest.
+- **Travel mode** — portable AP+STA operation for networks you don't administer (hotels, cafés): the Shield hosts its own WPA2 Wi-Fi (`Shield-XXXX`) with DHCP-advertised DNS and NAT to the upstream link, so joining devices get ad blocking with zero router changes. Includes WPS push-button provisioning.
+- **Device tracking** — per-IP query/block counters so you can see which device is the chattiest (plus MAC addresses from DHCP leases in travel mode).
 
 ## Hardware
 
