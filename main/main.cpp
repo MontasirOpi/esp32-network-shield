@@ -233,7 +233,7 @@ void health_monitor_task(void* arg) {
     // pending-verify confirmation anyway).
     if (!self_test_started && !provisioning && uptime_s() >= 30) {
       self_test_started = true;
-      xTaskCreate(self_test_task, "selftest", 4096, nullptr, 5, nullptr);
+      xTaskCreate(self_test_task, "selftest", 6144, nullptr, 5, nullptr);
     }
   }
 }

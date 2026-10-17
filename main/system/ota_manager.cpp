@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 #include "esp_crt_bundle.h"
 #include "esp_https_ota.h"
@@ -105,14 +106,14 @@ bool OtaManager::self_test_dns() {
   }
 
   const char* labels[] = {"google", "com"};
-  uint8_t req[512];
+  uint8_t req[256];
   const size_t req_len = build_a_query(labels, 2, req, sizeof(req));
   if (req_len == 0) return false;
 
-  uint8_t resp[4096];
-  size_t resp_len = sizeof(resp);
+  auto resp = std::make_unique<uint8_t[]>(1500);
+  size_t resp_len = 1500;
   uint32_t rtt_ms = 0;
-  if (!fwd.forward(req, req_len, resp, &resp_len, &rtt_ms)) {
+  if (!fwd.forward(req, req_len, resp.get(), &resp_len, &rtt_ms)) {
     ESP_LOGW(TAG, "self-test: forward failed");
     return false;
   }
