@@ -53,21 +53,26 @@ void ConfigManager::ensure_api_token() {
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
   size_t len = 0;
   esp_err_t err = nvs_get_str(h, kApiTokenKey, nullptr, &len);
-  if (err == ESP_OK && len > 1) return;  // present and non-empty (len counts NUL)
+  if (err != ESP_OK || len <= 1) {
+    // Generate 32 lowercase hex chars = 16 random bytes.
+    char token[33];
+    for (int i = 0; i < 16; ++i) {
+      // 2 hex chars + NUL per snprintf call; token[i*2..i*2+1] filled each pass.
+      snprintf(token + i * 2, 3, "%02x", static_cast<unsigned>(esp_random() & 0xFF));
+    }
+    token[32] = '\0';
 
-  // Generate 32 lowercase hex chars = 16 random bytes.
-  char token[33];
-  for (int i = 0; i < 16; ++i) {
-    // 2 hex chars + NUL per snprintf call; token[i*2..i*2+1] filled each pass.
-    snprintf(token + i * 2, 3, "%02x", static_cast<unsigned>(esp_random() & 0xFF));
+    if (nvs_set_str(h, kApiTokenKey, token) == ESP_OK) {
+      nvs_commit(h);
+      ESP_LOGI(TAG, "generated new api_token (first boot)");
+    } else {
+      ESP_LOGE(TAG, "failed to store generated api_token");
+    }
   }
-  token[32] = '\0';
 
-  if (nvs_set_str(h, kApiTokenKey, token) == ESP_OK) {
-    nvs_commit(h);
-    ESP_LOGI(TAG, "generated new api_token (first boot)");
-  } else {
-    ESP_LOGE(TAG, "failed to store generated api_token");
+  char current[33] = {0};
+  if (get_str(kApiTokenKey, current, sizeof(current))) {
+    ESP_LOGI(TAG, "API token: %s", current);
   }
 }
 
