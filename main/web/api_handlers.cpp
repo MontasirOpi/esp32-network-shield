@@ -505,7 +505,15 @@ bool validate_config_item(const char* key, const cJSON* item, std::string& err) 
     }
     return true;
   }
-  if (strcmp(key, "wifi_pass") == 0 || strcmp(key, "api_token") == 0) {
+  if (strcmp(key, "wifi_pass") == 0) {
+    const char* v = str_val();
+    if (v != nullptr && strlen(v) > 64) {
+      err = "wifi_pass must be 0..64 chars";
+      return false;
+    }
+    return true;
+  }
+  if (strcmp(key, "api_token") == 0) {
     err = std::string(key) + " cannot be changed via this API";
     return false;
   }
@@ -568,8 +576,30 @@ bool apply_config_item(const char* key, const cJSON* item, bool& reboot_needed) 
     return false;
   }
 
+  if (strcmp(key, "wifi_ssid") == 0) {
+    char cur[64] = {0};
+    cfg.get_str("wifi_ssid", cur, sizeof(cur));
+    if (strcmp(cur, item->valuestring) != 0) {
+      cfg.set_str("wifi_ssid", item->valuestring);
+      reboot_needed = true;
+    }
+    return false;
+  }
+  if (strcmp(key, "wifi_pass") == 0) {
+    const char* v = item->valuestring;
+    if (v != nullptr && *v != '\0') {
+      char cur[65] = {0};
+      cfg.get_str("wifi_pass", cur, sizeof(cur));
+      if (strcmp(cur, v) != 0) {
+        cfg.set_str("wifi_pass", v);
+        reboot_needed = true;
+      }
+    }
+    return false;
+  }
+
   if (strcmp(key, "upstream_primary") == 0 || strcmp(key, "upstream_secondary") == 0 ||
-      strcmp(key, "wifi_ssid") == 0 || strcmp(key, "device_name") == 0) {
+      strcmp(key, "device_name") == 0) {
     cfg.set_str(key, item->valuestring);
     return strcmp(key, "upstream_primary") == 0 || strcmp(key, "upstream_secondary") == 0;
   }

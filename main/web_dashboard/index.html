@@ -98,6 +98,23 @@
   }
   .muted { color: var(--muted); font-size: 12px; }
   .scroll { max-height: 320px; overflow-y: auto; }
+  .cfg-section-title {
+    font-size: 11px; font-weight: 700; color: var(--blue);
+    text-transform: uppercase; letter-spacing: .06em;
+    margin: 16px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  }
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.72);
+    display: flex; align-items: center; justify-content: center; z-index: 9999;
+    backdrop-filter: blur(4px);
+  }
+  .modal-card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    max-width: 440px; width: 90%; padding: 24px; box-shadow: 0 16px 40px rgba(0,0,0,0.6);
+  }
+  .modal-card h3 { margin: 0 0 10px; font-size: 18px; color: #fff; }
+  .modal-card p { color: var(--muted); margin: 0 0 18px; font-size: 13px; line-height: 1.5; }
+  .modal-btn-row { display: flex; justify-content: flex-end; gap: 10px; }
 </style>
 </head>
 <body>
@@ -106,9 +123,10 @@
   <span class="dot" id="connDot" title="connection"></span>
   <h1>ESP32 Network Shield</h1>
   <span class="spacer"></span>
-  <div id="tokenbar">
-    <input type="password" id="tokenInput" placeholder="API token" autocomplete="off">
-    <button id="tokenSave">Save</button>
+  <div id="tokenbar" style="display:flex;align-items:center;gap:6px">
+    <span class="muted" style="font-size:11px" title="Admin Token unlocks settings saving. Your router does NOT use an API key.">Admin Token:</span>
+    <input type="password" id="tokenInput" placeholder="Enter API token" style="width:170px" autocomplete="off" title="Dashboard Admin Password (default: b8365d8e59b59d9d3eac0d69009de2d8)">
+    <button id="tokenSave">Unlock</button>
   </div>
 </header>
 
@@ -201,23 +219,34 @@
   <section class="card">
     <h2>Configuration</h2>
     <form id="cfgForm">
+      <div class="cfg-section-title">1. Upstream Wi-Fi (বাসার Wi-Fi সংযোগ)</div>
+      <p class="muted" style="margin:-2px 0 10px">The Wi-Fi network the Shield connects to for internet access.</p>
+      <div class="field"><label>Wi-Fi SSID</label><input id="cfgWifiSsid" required maxlength="32" placeholder="e.g. Fahim_EXT"></div>
+      <div class="field"><label>Wi-Fi Password</label><input id="cfgWifiPass" type="password" maxlength="64" placeholder="Leave blank to keep existing password"></div>
+
+      <div class="cfg-section-title">2. Operating Mode & Ad-Blocking Wi-Fi</div>
+      <div class="field"><label>Mode</label><select id="cfgMode">
+        <option value="travel">travel — Shield broadcasts its own Wi-Fi (Plug & Play) [Recommended]</option>
+        <option value="dns">dns — Shield is client-only (set your router's DNS to Shield IP)</option>
+      </select></div>
+      <div id="travelConfigGroup">
+        <div class="field"><label>Hotspot SSID</label><input id="cfgApSsid" maxlength="32" placeholder="Shield-AdBlock (empty = auto)"></div>
+        <div class="field"><label>Hotspot Password</label><input id="cfgApPass" maxlength="63" placeholder="e.g. shield1234 (min 8 chars)"></div>
+        <p class="muted" style="margin:-2px 0 10px;font-size:11px">Connect your phone, PC, or TV directly to this Wi-Fi for instant ad blocking without touching your router.</p>
+      </div>
+
+      <div class="cfg-section-title">3. DNS Filtering & Upstreams</div>
       <div class="field"><label>Upstream primary</label><input id="cfgPrimary" required pattern="\d+\.\d+\.\d+\.\d+"></div>
       <div class="field"><label>Upstream secondary</label><input id="cfgSecondary" required pattern="\d+\.\d+\.\d+\.\d+"></div>
       <div class="field"><label>Upstream timeout (ms)</label><input id="cfgTimeout" type="number" min="500" max="10000" required></div>
       <div class="field"><label>Block mode</label><select id="cfgBlockMode">
-        <option value="0">0 — answer 0.0.0.0 / ::</option>
-        <option value="1">1 — NXDOMAIN</option>
+        <option value="0">0 — answer 0.0.0.0 / :: (Fast & Recommended)</option>
+        <option value="1">1 — NXDOMAIN (Domain does not exist)</option>
         <option value="2">2 — NODATA</option>
       </select></div>
       <div class="field"><label>Filtering enabled</label><input id="cfgFiltering" type="checkbox" style="flex:none;width:18px;height:18px"></div>
       <div class="field"><label>Update interval (h)</label><input id="cfgInterval" type="number" min="1" max="168" required></div>
-      <div class="field"><label>Mode</label><select id="cfgMode">
-        <option value="dns">dns — router points its DNS at the Shield</option>
-        <option value="travel">travel — Shield hosts its own Wi-Fi (AP+STA)</option>
-      </select></div>
-      <div class="field"><label>Travel AP SSID</label><input id="cfgApSsid" maxlength="32" placeholder="empty = auto (Shield-XXXX)"></div>
-      <div class="field"><label>Travel AP password</label><input id="cfgApPass" maxlength="63" placeholder="clear + save for a new random password"></div>
-      <button class="primary" type="submit" style="width:100%">Save configuration</button>
+      <button class="primary" type="submit" style="width:100%;margin-top:14px;padding:9px;font-weight:600">Save configuration</button>
     </form>
     <p class="muted" id="cfgMsg" style="margin:8px 0 0"></p>
   </section>
@@ -264,6 +293,18 @@
     <p class="muted" id="sysMsg" style="margin:8px 0 0"></p>
   </section>
 </main>
+
+<div id="rebootModal" class="modal-overlay" style="display:none">
+  <div class="modal-card">
+    <h3 id="modalTitle">Settings Saved!</h3>
+    <p id="modalBody">Your configuration has been updated. A quick reboot is required for Wi-Fi or mode changes to take effect.</p>
+    <div id="modalCountdown" style="display:none;margin:15px 0;font-size:15px;color:var(--blue);font-weight:600">Rebooting ESP32... reconnecting in <span id="countNum">5</span>s...</div>
+    <div class="modal-btn-row" id="modalBtnRow">
+      <button class="primary" id="btnModalReboot">Reboot Now</button>
+      <button id="btnModalClose">Later</button>
+    </div>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -454,6 +495,8 @@ function stopPollFallback() {
 // ---- config form ----
 async function loadConfig() {
   const c = await api('/api/config');
+  $('cfgWifiSsid').value = c.wifi_ssid || '';
+  $('cfgWifiPass').value = '';
   $('cfgPrimary').value = c.upstream_primary || '';
   $('cfgSecondary').value = c.upstream_secondary || '';
   $('cfgTimeout').value = c.upstream_timeout_ms || 2500;
@@ -463,7 +506,15 @@ async function loadConfig() {
   $('cfgMode').value = c.mode || 'dns';
   $('cfgApSsid').value = c.ap_ssid || '';
   $('cfgApPass').value = c.ap_pass || '';
+  syncModeUi();
 }
+
+function syncModeUi() {
+  const isTravel = ($('cfgMode').value === 'travel');
+  $('travelConfigGroup').style.display = isTravel ? 'block' : 'none';
+}
+$('cfgMode').onchange = syncModeUi;
+
 $('cfgForm').onsubmit = async ev => {
   ev.preventDefault();
   const body = {
@@ -474,18 +525,53 @@ $('cfgForm').onsubmit = async ev => {
     filtering_enabled: $('cfgFiltering').checked,
     update_interval_h: parseInt($('cfgInterval').value, 10),
     mode: $('cfgMode').value,
+    wifi_ssid: $('cfgWifiSsid').value.trim(),
     ap_ssid: $('cfgApSsid').value.trim(),
     ap_pass: $('cfgApPass').value
   };
+  const pass = $('cfgWifiPass').value;
+  if (pass) {
+    body.wifi_pass = pass;
+  }
   try {
     const r = await api('/api/config', { method: 'PUT', body: JSON.stringify(body) });
-    $('cfgMsg').textContent = r.ok
-      ? (r.reboot_required
-          ? 'Saved. Mode/AP changes need a reboot — use System → Reboot device.'
-          : 'Saved. Upstream changes apply immediately; no reboot needed.')
-      : 'Unexpected response.';
+    if (r.ok && r.reboot_required) {
+      showRebootModal('Settings Saved!', 'Wi-Fi, mode, or hotspot changes were saved. The device must reboot for them to take effect.');
+    } else if (r.ok) {
+      showRebootModal('Settings Saved!', 'Upstream DNS and filtering changes were saved and applied immediately; no reboot is required.');
+      $('btnModalReboot').style.display = 'none';
+    } else {
+      $('cfgMsg').textContent = 'Unexpected response.';
+    }
     loadStatus().catch(() => {});
   } catch (e) { showErr('Config save failed: ' + e.message); }
+};
+
+function showRebootModal(title, msg) {
+  $('modalTitle').textContent = title;
+  $('modalBody').textContent = msg;
+  $('rebootModal').style.display = 'flex';
+  $('modalBtnRow').style.display = 'flex';
+  $('modalCountdown').style.display = 'none';
+  $('btnModalReboot').style.display = 'inline-block';
+}
+$('btnModalClose').onclick = () => { $('rebootModal').style.display = 'none'; };
+$('btnModalReboot').onclick = async () => {
+  $('modalBtnRow').style.display = 'none';
+  $('modalCountdown').style.display = 'block';
+  try {
+    await api('/api/reboot', { method: 'POST' });
+  } catch (e) {}
+  let sec = 5;
+  $('countNum').textContent = sec;
+  const iv = setInterval(() => {
+    sec--;
+    $('countNum').textContent = sec;
+    if (sec <= 0) {
+      clearInterval(iv);
+      location.reload();
+    }
+  }, 1000);
 };
 
 // ---- WPS ----
