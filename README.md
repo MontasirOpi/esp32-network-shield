@@ -88,6 +88,7 @@ esp32-network-shield/
     ├── ARCHITECTURE.md       # deep dive: diagrams, RAM budget, file formats
     ├── FLASHING.md           # connect the board via USB, drivers, upload firmware
     ├── FLASHING_BN.md        # সম্পূর্ণ বাংলা ফ্ল্যাশিং গাইড
+    ├── USER_GUIDE_BN.md      # সম্পূর্ণ বাংলা ব্যবহার নির্দেশিকা (Dashboard & Router Setup)
     ├── GETTING_STARTED.md    # install → flash → provision → verify
     ├── API.md                # REST + WebSocket reference
     ├── TESTING.md            # host tests, build, on-device checks
@@ -100,6 +101,7 @@ esp32-network-shield/
 - [Architecture](docs/ARCHITECTURE.md) — start here if you're going to hack on it.
 - [Flashing](docs/FLASHING.md) — connect the ESP32 over USB and upload the code, step by step.
 - [ফ্ল্যাশিং গাইড (বাংলা)](docs/FLASHING_BN.md) — ESP32 সংযোগ ও ফ্ল্যাশ করার সম্পূর্ণ বাংলা গাইড।
+- [ব্যবহার নির্দেশিকা (বাংলা)](docs/USER_GUIDE_BN.md) — ড্যাশবোর্ড ব্যবহার, রাউটার ও ডিভাইস কনফিগারেশন গাইড।
 - [Getting started](docs/GETTING_STARTED.md) — flash it and get it on your network.
 - [API reference](docs/API.md) — REST + WebSocket.
 - [Testing](docs/TESTING.md) — host unit tests and on-device verification.
