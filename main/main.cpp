@@ -187,7 +187,7 @@ void self_test_task(void* arg) {
   // Retry up to 3 times in case of transient UDP packet loss.
   bool ok = false;
   for (int retry = 0; retry < 3; ++retry) {
-    if (shield::OtaManager::instance().self_test_dns()) {
+    if (shield::OtaManager::instance().self_test_dns(&g_forwarder)) {
       ok = true;
       break;
     }
@@ -223,7 +223,7 @@ void health_monitor_task(void* arg) {
 
     // Upstream health re-check via the forwarder (every ~60 s).
     if (!provisioning && cycle % 6 == 0 && shield::WifiManager::instance().is_connected()) {
-      if (shield::OtaManager::instance().self_test_dns()) {
+      if (shield::OtaManager::instance().self_test_dns(&g_forwarder)) {
         ESP_LOGI(TAG, "upstream health OK");
       } else {
         ESP_LOGW(TAG, "upstream health check failed");

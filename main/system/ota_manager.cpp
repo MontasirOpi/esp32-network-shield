@@ -95,14 +95,19 @@ void OtaManager::ota_task(void* arg) {
   vTaskDelete(nullptr);
 }
 
-bool OtaManager::self_test_dns() {
+bool OtaManager::self_test_dns(DnsForwarder* forwarder) {
   char primary[32] = "1.1.1.1";
   ConfigManager::instance().get_str("upstream_primary", primary, sizeof(primary));
 
-  auto fwd = std::make_unique<DnsForwarder>();
-  if (!fwd->init(primary, primary, 5000)) {  // 5 s timeout per task spec
-    ESP_LOGW(TAG, "self-test: forwarder init failed");
-    return false;
+  std::unique_ptr<DnsForwarder> temp_fwd;
+  DnsForwarder* fwd = forwarder;
+  if (!fwd) {
+    temp_fwd = std::make_unique<DnsForwarder>();
+    if (!temp_fwd->init(primary, primary, 5000)) {  // 5 s timeout per task spec
+      ESP_LOGW(TAG, "self-test: forwarder init failed");
+      return false;
+    }
+    fwd = temp_fwd.get();
   }
 
   const char* labels[] = {"google", "com"};

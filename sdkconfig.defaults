@@ -35,3 +35,6 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # --- IPv4 NAPT: required for travel mode (AP clients NAT through STA) ---
 CONFIG_LWIP_IP_FORWARD=y
 CONFIG_LWIP_IPV4_NAPT=y
+
+# --- Socket limits: provide headroom for DNS, Forwarder, mDNS, HTTP, and WebSocket ---
+CONFIG_LWIP_MAX_SOCKETS=16
