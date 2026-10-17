@@ -85,6 +85,8 @@ esp32-network-shield/
 │   └── system/               # Team E: config_manager, stats, devices, query log, OTA
 ├── tests/host/               # host unit tests, no external deps (Team A)
 └── docs/
+    ├── SYSTEM_GUIDE_EN.md    # Master system & architecture guide (English)
+    ├── SYSTEM_GUIDE_BN.md    # মাস্টার সিস্টেম ও আর্কিটেকচার গাইড (বাংলা)
     ├── ARCHITECTURE.md       # deep dive: diagrams, RAM budget, file formats
     ├── FLASHING.md           # connect the board via USB, drivers, upload firmware
     ├── FLASHING_BN.md        # সম্পূর্ণ বাংলা ফ্ল্যাশিং গাইড
@@ -98,7 +100,9 @@ esp32-network-shield/
 
 ## Docs
 
-- [Architecture](docs/ARCHITECTURE.md) — start here if you're going to hack on it.
+- [Master System & Architecture Guide (EN)](docs/SYSTEM_GUIDE_EN.md) — complete guide on how the system works, is built, and operates.
+- [মাস্টার সিস্টেম ও আর্কিটেকচার গাইড (বাংলা)](docs/SYSTEM_GUIDE_BN.md) — সিস্টেম আর্কিটেকচার, মেকিং ও ব্যবহারের সম্পূর্ণ বাংলা গাইড।
+- [Architecture](docs/ARCHITECTURE.md) — deep dive on memory budgets, diagrams, and LittleFS formats.
 - [Flashing](docs/FLASHING.md) — connect the ESP32 over USB and upload the code, step by step.
 - [ফ্ল্যাশিং গাইড (বাংলা)](docs/FLASHING_BN.md) — ESP32 সংযোগ ও ফ্ল্যাশ করার সম্পূর্ণ বাংলা গাইড।
 - [ব্যবহার নির্দেশিকা (বাংলা)](docs/USER_GUIDE_BN.md) — ড্যাশবোর্ড ব্যবহার, রাউটার ও ডিভাইস কনফিগারেশন গাইড।
