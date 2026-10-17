@@ -184,7 +184,16 @@ bool dns_pipeline_handler(const uint8_t* req, size_t req_len, uint32_t client_ip
 void self_test_task(void* arg) {
   (void)arg;
   // Rollback guard: mark the app valid ONLY if the self-test passes.
-  if (shield::OtaManager::instance().self_test_dns()) {
+  // Retry up to 3 times in case of transient UDP packet loss.
+  bool ok = false;
+  for (int retry = 0; retry < 3; ++retry) {
+    if (shield::OtaManager::instance().self_test_dns()) {
+      ok = true;
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  }
+  if (ok) {
     shield::OtaManager::instance().confirm_boot_ok();
   } else {
     ESP_LOGE(TAG, "self-test FAILED: app stays unconfirmed, bootloader will "
@@ -213,7 +222,7 @@ void health_monitor_task(void* arg) {
     }
 
     // Upstream health re-check via the forwarder (every ~60 s).
-    if (!provisioning && cycle % 6 == 0) {
+    if (!provisioning && cycle % 6 == 0 && shield::WifiManager::instance().is_connected()) {
       if (shield::OtaManager::instance().self_test_dns()) {
         ESP_LOGI(TAG, "upstream health OK");
       } else {
@@ -231,7 +240,8 @@ void health_monitor_task(void* arg) {
     // Skipped in provisioning mode: there is no STA uplink, so the DNS
     // self-test would fail spuriously (and factory images don't need the
     // pending-verify confirmation anyway).
-    if (!self_test_started && !provisioning && uptime_s() >= 30) {
+    if (!self_test_started && !provisioning &&
+        shield::WifiManager::instance().is_connected() && uptime_s() >= 30) {
       self_test_started = true;
       xTaskCreate(self_test_task, "selftest", 8192, nullptr, 5, nullptr);
     }

@@ -248,6 +248,7 @@ bool HttpServer::start() {
   config.server_port = 80;
   config.stack_size = 6144;
   config.max_uri_handlers = 24;
+  config.lru_purge_enable = true;
   // Required for the "/api/rules/*" wildcard route (default matcher is exact).
   config.uri_match_fn = httpd_uri_match_wildcard;
 
