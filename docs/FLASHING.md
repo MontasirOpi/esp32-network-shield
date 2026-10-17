@@ -1,5 +1,7 @@
 # Flashing the ESP32 Network Shield
 
+> বাংলা সংস্করণ: [FLASHING_BN.md](FLASHING_BN.md)
+
 How to physically connect your ESP32 board to your computer and upload the firmware — step by step, no ESP32 experience assumed. No wiring or soldering needed: this project uses USB only.
 
 If you've flashed an ESP32 before, you can skip to [Upload the firmware](#step-4--upload-the-firmware).
