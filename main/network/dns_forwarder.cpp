@@ -17,7 +17,7 @@ namespace {
 const char* TAG = "dns_forwarder";
 }  // namespace
 
-DnsForwarder::DnsForwarder() {
+DnsForwarder::DnsForwarder() : rx_buf_(std::make_unique<uint8_t[]>(kMaxMessage)) {
   // Health entries start "reachable" until proven otherwise; IPs filled by init().
   health_[0].reachable = true;
   health_[1].reachable = true;
@@ -140,7 +140,7 @@ bool DnsForwarder::try_upstream(int idx, const uint8_t* req, size_t req_len,
 
   int64_t start_us = esp_timer_get_time();
   int64_t deadline_us = start_us + static_cast<int64_t>(timeout_ms_) * 1000;
-  uint8_t* buf = rx_buf_;  // BSS scratch; safe: forward() holds mutex_ here.
+  uint8_t* buf = rx_buf_.get();  // Heap scratch; safe: forward() holds mutex_ here.
 
   while (true) {
     // Recompute the remaining timeout each lap so stray packets can't extend

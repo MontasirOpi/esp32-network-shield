@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 
 namespace shield {
@@ -60,9 +61,9 @@ class DnsForwarder {
   uint32_t timeout_ms_ = 2500;
   int sock_ = -1;
   UpstreamHealth health_[2];
-  // Receive scratch in BSS (not on the caller's stack); only touched while
+  // Receive scratch dynamically allocated (not on the caller's stack); only touched while
   // mutex_ is held by forward(), so it is safe to share across calls.
-  uint8_t rx_buf_[kMaxMessage];
+  std::unique_ptr<uint8_t[]> rx_buf_;
 };
 
 }  // namespace shield

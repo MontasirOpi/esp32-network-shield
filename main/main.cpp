@@ -233,7 +233,7 @@ void health_monitor_task(void* arg) {
     // pending-verify confirmation anyway).
     if (!self_test_started && !provisioning && uptime_s() >= 30) {
       self_test_started = true;
-      xTaskCreate(self_test_task, "selftest", 6144, nullptr, 5, nullptr);
+      xTaskCreate(self_test_task, "selftest", 8192, nullptr, 5, nullptr);
     }
   }
 }
@@ -346,7 +346,7 @@ extern "C" void app_main(void) {
 
   // 10. Health monitor (10 s): reconnect, upstream health, stats flush,
   // heap watermark, one-shot OTA self-test confirm at 30 s uptime.
-  xTaskCreate(health_monitor_task, "health", 4096, nullptr, 5, nullptr);
+  xTaskCreate(health_monitor_task, "health", 6144, nullptr, 5, nullptr);
 
   ESP_LOGI(TAG, "boot complete");
 }

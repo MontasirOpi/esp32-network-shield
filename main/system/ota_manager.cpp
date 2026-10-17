@@ -99,8 +99,8 @@ bool OtaManager::self_test_dns() {
   char primary[32] = "1.1.1.1";
   ConfigManager::instance().get_str("upstream_primary", primary, sizeof(primary));
 
-  DnsForwarder fwd;
-  if (!fwd.init(primary, primary, 5000)) {  // 5 s timeout per task spec
+  auto fwd = std::make_unique<DnsForwarder>();
+  if (!fwd->init(primary, primary, 5000)) {  // 5 s timeout per task spec
     ESP_LOGW(TAG, "self-test: forwarder init failed");
     return false;
   }
@@ -113,7 +113,7 @@ bool OtaManager::self_test_dns() {
   auto resp = std::make_unique<uint8_t[]>(1500);
   size_t resp_len = 1500;
   uint32_t rtt_ms = 0;
-  if (!fwd.forward(req, req_len, resp.get(), &resp_len, &rtt_ms)) {
+  if (!fwd->forward(req, req_len, resp.get(), &resp_len, &rtt_ms)) {
     ESP_LOGW(TAG, "self-test: forward failed");
     return false;
   }
