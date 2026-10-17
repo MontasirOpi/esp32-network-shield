@@ -20,6 +20,8 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "esp_event.h"
+#include "esp_netif.h"
 #include "esp_wifi.h"
 #include "esp_littlefs.h"  // managed component joltwallet/littlefs (NOT esp_vfs_littlefs.h)
 
@@ -303,7 +305,14 @@ extern "C" void app_main(void) {
     return static_cast<uint32_t>(esp_timer_get_time() / 1000);
   });
 
-  // 6. Upstream forwarder.
+  // Initialize TCP/IP stack and event loop before any network sockets are created.
+  ESP_ERROR_CHECK(esp_netif_init());
+  ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+  // 6. Wi-Fi (STA if credentials exist, else provisioning AP + captive portal).
+  WifiManager::instance().init();
+
+  // 7. Upstream forwarder.
   char primary[32] = "1.1.1.1", secondary[32] = "1.0.0.1";
   uint32_t timeout_ms = 2500;
   ConfigManager::instance().get_str("upstream_primary", primary, sizeof(primary));
@@ -319,16 +328,13 @@ extern "C" void app_main(void) {
       "https://someonewhocares.org/hosts/zero/hosts",
   });
 
-  // 7. DNS server — skipped in provisioning mode (AP hijack owns :53).
+  // 8. DNS server — skipped in provisioning mode (AP hijack owns :53).
   g_server.set_query_handler(dns_pipeline_handler);
   if (in_provisioning_mode()) {
     ESP_LOGI(TAG, "provisioning mode: AP hijack DNS owns :53; pipeline server not started");
   } else if (!g_server.start(53)) {
     ESP_LOGE(TAG, "DNS server failed to start on :53");
   }
-
-  // 8. Wi-Fi (STA if credentials exist, else provisioning AP + captive portal).
-  WifiManager::instance().init();
 
   // 9. mDNS + web dashboard.
   // In provisioning mode the captive portal already owns port 80, so the
