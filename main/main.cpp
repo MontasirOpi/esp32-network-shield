@@ -167,20 +167,16 @@ bool dns_pipeline_handler(const uint8_t* req, size_t req_len, uint32_t client_ip
   }
 
   // 5. Forward upstream (raw packet, primary → secondary failover inside).
-  uint8_t fwd_buf[kMaxDnsMsg];
-  size_t fwd_len = sizeof(fwd_buf);
   uint32_t rtt_ms = 0;
-  if (!g_forwarder.forward(req, req_len, fwd_buf, &fwd_len, &rtt_ms)) {
+  if (!g_forwarder.forward(req, req_len, resp, resp_len, &rtt_ms)) {
     ESP_LOGW(TAG, "upstream forward failed for %s (client times out)",
              norm.c_str());
     return false;  // no response: client times out; logged above
   }
 
   // 6. Cache the upstream answer with its own TTL, then reply verbatim.
-  g_cache->store(norm, q.qtype, fwd_buf, fwd_len,
-                 dns_ttl_from_response(fwd_buf, fwd_len));
-  memcpy(resp, fwd_buf, fwd_len);
-  *resp_len = fwd_len;
+  g_cache->store(norm, q.qtype, resp, *resp_len,
+                 dns_ttl_from_response(resp, *resp_len));
   record_pipeline_result(norm, q.qtype, client_ip, DnsDecision::ALLOW, false);
   return true;
 }

@@ -15,6 +15,16 @@ namespace {
 constexpr const char* TAG = "config";
 constexpr const char* kNamespace = "shield";
 constexpr const char* kApiTokenKey = "api_token";
+
+const char* nvs_key(const char* key) {
+  if (key == nullptr) return "";
+  if (strcmp(key, "upstream_primary") == 0) return "up_primary";
+  if (strcmp(key, "upstream_secondary") == 0) return "up_secondary";
+  if (strcmp(key, "upstream_timeout_ms") == 0) return "up_timeout_ms";
+  if (strcmp(key, "filtering_enabled") == 0) return "filter_enabled";
+  if (strcmp(key, "update_interval_h") == 0) return "upd_interval_h";
+  return key;
+}
 }  // namespace
 
 ConfigManager& ConfigManager::instance() {
@@ -80,54 +90,98 @@ bool ConfigManager::get_str(const char* key, char* out, size_t out_len) const {
   if (!initialized_ || key == nullptr || out == nullptr || out_len == 0) return false;
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
   size_t needed = 0;
-  if (nvs_get_str(h, key, nullptr, &needed) != ESP_OK) return false;  // missing
-  if (needed > out_len) return false;  // would not fit (needed counts NUL)
-  return nvs_get_str(h, key, out, &needed) == ESP_OK;
+  const char* nk = nvs_key(key);
+  if (nvs_get_str(h, nk, nullptr, &needed) == ESP_OK && needed <= out_len) {
+    return nvs_get_str(h, nk, out, &needed) == ESP_OK;
+  }
+  if (strcmp(key, "upstream_primary") == 0) {
+    strncpy(out, "1.1.1.1", out_len - 1);
+    out[out_len - 1] = '\0';
+    return true;
+  }
+  if (strcmp(key, "upstream_secondary") == 0) {
+    strncpy(out, "1.0.0.1", out_len - 1);
+    out[out_len - 1] = '\0';
+    return true;
+  }
+  if (strcmp(key, "device_name") == 0) {
+    strncpy(out, "esp32-shield", out_len - 1);
+    out[out_len - 1] = '\0';
+    return true;
+  }
+  return false;
 }
 
 bool ConfigManager::set_str(const char* key, const char* value) {
   if (!initialized_ || key == nullptr || value == nullptr) return false;
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
-  if (nvs_set_str(h, key, value) != ESP_OK) return false;
+  if (nvs_set_str(h, nvs_key(key), value) != ESP_OK) return false;
   return nvs_commit(h) == ESP_OK;  // setters commit immediately (§3)
 }
 
 bool ConfigManager::get_u32(const char* key, uint32_t* out) const {
   if (!initialized_ || key == nullptr || out == nullptr) return false;
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
-  return nvs_get_u32(h, key, out) == ESP_OK;
+  if (nvs_get_u32(h, nvs_key(key), out) == ESP_OK) return true;
+  if (strcmp(key, "upstream_timeout_ms") == 0) {
+    *out = 2500;
+    return true;
+  }
+  if (strcmp(key, "update_interval_h") == 0) {
+    *out = 24;
+    return true;
+  }
+  return false;
 }
 
 bool ConfigManager::set_u32(const char* key, uint32_t value) {
   if (!initialized_ || key == nullptr) return false;
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
-  if (nvs_set_u32(h, key, value) != ESP_OK) return false;
+  if (nvs_set_u32(h, nvs_key(key), value) != ESP_OK) return false;
   return nvs_commit(h) == ESP_OK;
 }
 
 bool ConfigManager::get_u8(const char* key, uint8_t* out) const {
   if (!initialized_ || key == nullptr || out == nullptr) return false;
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
-  return nvs_get_u8(h, key, out) == ESP_OK;
+  if (nvs_get_u8(h, nvs_key(key), out) == ESP_OK) return true;
+  if (strcmp(key, "filtering_enabled") == 0) {
+    *out = 1;
+    return true;
+  }
+  if (strcmp(key, "block_mode") == 0) {
+    *out = 0;
+    return true;
+  }
+  if (strcmp(key, "stats_flush_min") == 0) {
+    *out = 5;
+    return true;
+  }
+  return false;
 }
 
 bool ConfigManager::set_u8(const char* key, uint8_t value) {
   if (!initialized_ || key == nullptr) return false;
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
-  if (nvs_set_u8(h, key, value) != ESP_OK) return false;
+  if (nvs_set_u8(h, nvs_key(key), value) != ESP_OK) return false;
   return nvs_commit(h) == ESP_OK;
 }
 
 bool ConfigManager::get_u16(const char* key, uint16_t* out) const {
   if (!initialized_ || key == nullptr || out == nullptr) return false;
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
-  return nvs_get_u16(h, key, out) == ESP_OK;
+  if (nvs_get_u16(h, nvs_key(key), out) == ESP_OK) return true;
+  if (strcmp(key, "cache_entries") == 0) {
+    *out = 256;
+    return true;
+  }
+  return false;
 }
 
 bool ConfigManager::set_u16(const char* key, uint16_t value) {
   if (!initialized_ || key == nullptr) return false;
   auto h = static_cast<nvs_handle_t>(reinterpret_cast<uintptr_t>(nvs_handle_));
-  if (nvs_set_u16(h, key, value) != ESP_OK) return false;
+  if (nvs_set_u16(h, nvs_key(key), value) != ESP_OK) return false;
   return nvs_commit(h) == ESP_OK;
 }
 

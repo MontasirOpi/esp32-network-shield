@@ -49,7 +49,7 @@ bool DnsServer::start(uint16_t port) {
   running_.store(true);
   // Pinned to core 0 (protocol CPU), 4 KB stack, priority 5 per design.
   BaseType_t ok = xTaskCreatePinnedToCore(&DnsServer::task_entry, "dns_server",
-                                          4096, this, 5, &task_, 0);
+                                          6144, this, 5, &task_, 0);
   if (ok != pdPASS) {
     ESP_LOGE(TAG, "task create failed");
     running_.store(false);
